@@ -62,3 +62,11 @@
 - [ ] Upload images to an image host or S3 bucket as an alternative
 - [ ] GUI or CLI with flags (`--god "Anubis"`, `--overwrite`, `--dry-run`)
 - [ ] Diff mode: detect newly added skins since last run and only capture those
+- [ ] **Animated capture** — record a short clip per skin instead of (or in addition to) a static screenshot:
+    - Option A: 5-second screen recording of the model view → animated WebP or GIF
+    - Option B: click-drag to rotate the model (front → side → back sweep), record ~2s → animated WebP
+    - Animated WebP preferred over GIF (smaller, supports transparency, wiki-compatible)
+
+## Before production run
+
+- [ ] Increase `after_skin_select` in `config.yaml` from `0.5`s to `3.0`s so the 3D model has time to fully load before the screenshot is taken
