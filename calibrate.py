@@ -108,18 +108,25 @@ class Calibrator:
         self.rect_id = None
         self.dragging = False
 
-        # Scale down if the screenshot is very large so it fits on screen
+        # Scale the screenshot to fill as much of the screen as possible
         sw, sh = screenshot.size
-        max_w, max_h = 1600, 900
+        tmp = tk.Tk(); tmp.withdraw()
+        max_w = tmp.winfo_screenwidth() - 20
+        # Reserve space for: title bar (~30), status bar (~30), button bar (~44), taskbar (~48) + extra
+        max_h = tmp.winfo_screenheight() - 210
+        tmp.destroy()
         scale = min(max_w / sw, max_h / sh, 1.0)
         self.scale = scale
         display_w = int(sw * scale)
         display_h = int(sh * scale)
         display_img = screenshot.resize((display_w, display_h), Image.LANCZOS)
 
+        self.saved = False
+
         self.root = tk.Tk()
         self.root.title("Region Calibration")
         self.root.resizable(False, False)
+        self.root.protocol("WM_DELETE_WINDOW", self._on_discard)
 
         # Status bar
         self.status_var = tk.StringVar()
@@ -141,6 +148,16 @@ class Calibrator:
         self.canvas.bind("<B1-Motion>", self._on_drag)
         self.canvas.bind("<ButtonRelease-1>", self._on_release)
         self.canvas.bind("<ButtonPress-3>", self._on_skip)
+
+        # Button bar
+        btn_bar = tk.Frame(self.root, bg="#1e1e1e", pady=6)
+        btn_bar.pack(fill="x", side="bottom")
+        tk.Button(btn_bar, text="Save & Close", command=self._on_save,
+                  bg="#27ae60", fg="white", font=("Segoe UI", 10, "bold"),
+                  padx=16, pady=4, relief="flat", cursor="hand2").pack(side="right", padx=8)
+        tk.Button(btn_bar, text="Discard & Close", command=self._on_discard,
+                  bg="#c0392b", fg="white", font=("Segoe UI", 10),
+                  padx=16, pady=4, relief="flat", cursor="hand2").pack(side="right", padx=0)
 
         self._update_prompt()
 
@@ -173,9 +190,17 @@ class Calibrator:
                     self.canvas.create_text(x1 + 4, y1 + 4, anchor="nw", text=key,
                                             fill=color, font=("Segoe UI", 9, "bold"))
 
+    def _on_save(self):
+        self.saved = True
+        self.root.destroy()
+
+    def _on_discard(self):
+        self.saved = False
+        self.root.destroy()
+
     def _update_prompt(self):
         if self.index >= len(self.regions_order):
-            self.status_var.set("All regions done! Close this window to save.")
+            self.status_var.set("All regions done! Click 'Save & Close' to write config.yaml.")
             return
         key, label = self.regions_order[self.index]
         color = COLORS[self.index % len(COLORS)]
@@ -250,9 +275,10 @@ class Calibrator:
         self.index += 1
         self._update_prompt()
 
-    def run(self) -> dict:
+    def run(self) -> dict | None:
+        """Run the calibration UI. Returns results dict if saved, None if discarded."""
         self.root.mainloop()
-        return self.results
+        return self.results if self.saved else None
 
 
 # ── Spin calibration ──────────────────────────────────────────────────────────
@@ -401,6 +427,10 @@ if __name__ == "__main__":
 
     calibrator = Calibrator(screenshot, REGIONS_ORDER, existing)
     raw = calibrator.run()
+
+    if raw is None:
+        print("\nDiscarded — config.yaml not changed.")
+        sys.exit(0)
 
     # Compute gap from first_card and _second_card if both were drawn
     first  = raw.get("first_card",   [0, 0, 0, 0])

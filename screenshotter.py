@@ -125,6 +125,14 @@ def ocr(region: list) -> str:
     return text
 
 
+def _fmt_elapsed(seconds: float) -> str:
+    m, s = divmod(int(seconds), 60)
+    h, m = divmod(m, 60)
+    if h:
+        return f"{h}h {m:02d}m {s:02d}s"
+    return f"{m}m {s:02d}s"
+
+
 def make_id(name: str) -> str:
     """Produce a URL/filename-safe slug from a display name."""
     name = name.lower()
@@ -422,7 +430,7 @@ def _init_manifest(dry_run: bool):
         return
     data = {
         "meta": {"tool": "s2-skin-screenshotter", "created": time.strftime("%Y-%m-%d")},
-        "gods": [],
+        "gods": {},
     }
     if not dry_run:
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -440,17 +448,24 @@ def _update_manifest(god_name_raw: str, skins: list[dict], dry_run: bool):
 
     data.setdefault("meta", {"tool": "s2-skin-screenshotter"})
     data["meta"]["last_updated"] = time.strftime("%Y-%m-%d")
-    data.setdefault("gods", [])
+    # gods/skins/prisms are all dicts keyed by name (order-independent merging)
+    if isinstance(data.get("gods"), list):
+        data["gods"] = {g["name"]: {"skins": g.get("skins", [])} for g in data["gods"]}
+    data.setdefault("gods", {})
 
-    god_entry = next((g for g in data["gods"] if g["name"] == god_name_raw), None)
-    if god_entry is None:
-        god_entry = {"name": god_name_raw, "skins": []}
-        data["gods"].append(god_entry)
-
-    by_name = {s["name"]: s for s in god_entry["skins"]}
+    god_key = make_id(god_name_raw)
+    god_entry = data["gods"].setdefault(god_key, {"skins": {}})
+    if isinstance(god_entry.get("skins"), list):
+        god_entry["skins"] = {
+            s["file"].removesuffix(".webp"): dict(
+                s, prisms={p["file"].removesuffix(".webp"): p for p in s.get("prisms", [])}
+                if isinstance(s.get("prisms"), list) else s.get("prisms", {})
+            )
+            for s in god_entry["skins"]
+        }
     for skin in skins:
-        by_name[skin["name"]] = skin
-    god_entry["skins"] = list(by_name.values())
+        skin_key = skin["file"].removesuffix(".webp")
+        god_entry["skins"][skin_key] = skin
 
     if not dry_run:
         OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
@@ -462,6 +477,7 @@ def _update_manifest(god_name_raw: str, skins: list[dict], dry_run: bool):
 
 def process_current_god(dry_run: bool = False):
     _init_manifest(dry_run)
+    run_start = time.monotonic()
 
     card_centers = visible_card_centers()
     print(f"Grid geometry: {len(card_centers)} card slots visible per page "
@@ -505,69 +521,84 @@ def process_current_god(dry_run: bool = False):
 
             _cur, total_prisms = get_prism_info()
 
-            if total_prisms > 0:
-                # Prism 1/N is the base skin; prisms 2..N are recolors with names
-                # of the form "Base Skin Name - Recolor Name".
-                navigate_to_first_prism()
+            # Track files written for this skin. On Ctrl+C we delete them so
+            # the next run starts fresh rather than finding a partial capture.
+            _skin_files: list[Path] = []
+            try:
+                if total_prisms > 0:
+                    # Prism 1/N is the base skin; prisms 2..N are recolors with names
+                    # of the form "Base Skin Name - Recolor Name".
+                    navigate_to_first_prism()
 
-                base_name_raw = ocr(REGIONS["skin_name"]).strip()
-                base_slug = make_id(god_name_raw + " " + base_name_raw)
-                base_file = f"{base_slug}.webp"
-                base_spin = f"{base_slug}-spin.webp"
-                s, k = _log_save(save_image(OUTPUT_DIR / base_file, dry_run), base_file,
-                                 f"prism 1/{total_prisms}")
-                saved += s; skipped += k
-                s, k = _log_save(capture_spin_webp(OUTPUT_DIR / base_spin, dry_run), base_spin,
-                                 f"spin prism 1/{total_prisms}")
-                saved += s; skipped += k
-
-                skin_entry: dict = {
-                    "name": base_name_raw,
-                    "file": base_file,
-                    "spin_file": base_spin,
-                    "prisms": [],
-                }
-
-                for i in range(2, total_prisms + 1):
-                    if REGIONS.get("btn_prism_next"):
-                        click_at(*region_center(REGIONS["btn_prism_next"]),
-                                 delay=DELAYS.get("after_prism_nav", 0.4))
-                    recolor_raw = ocr(REGIONS["skin_name"]).strip()
-                    recolor_slug = make_id(god_name_raw + " " + recolor_raw)
-                    recolor_file = f"{recolor_slug}.webp"
-                    recolor_spin = f"{recolor_slug}-spin.webp"
-                    s, k = _log_save(save_image(OUTPUT_DIR / recolor_file, dry_run),
-                                     recolor_file, f"prism {i}/{total_prisms}")
+                    base_name_raw = ocr(REGIONS["skin_name"]).strip()
+                    base_slug = make_id(god_name_raw + " " + base_name_raw)
+                    base_file = f"{base_slug}.webp"
+                    base_spin = f"{base_slug}-spin.webp"
+                    _skin_files += [OUTPUT_DIR / base_file, OUTPUT_DIR / base_spin]
+                    s, k = _log_save(save_image(OUTPUT_DIR / base_file, dry_run), base_file,
+                                     f"prism 1/{total_prisms}")
                     saved += s; skipped += k
-                    s, k = _log_save(capture_spin_webp(OUTPUT_DIR / recolor_spin, dry_run),
-                                     recolor_spin, f"spin prism {i}/{total_prisms}")
+                    s, k = _log_save(capture_spin_webp(OUTPUT_DIR / base_spin, dry_run), base_spin,
+                                     f"spin prism 1/{total_prisms}")
                     saved += s; skipped += k
 
-                    skin_entry["prisms"].append({
-                        "name": recolor_raw,
-                        "index": i - 1,   # 1-based among recolors
-                        "file": recolor_file,
-                        "spin_file": recolor_spin,
+                    skin_entry: dict = {
+                        "name": base_name_raw,
+                        "file": base_file,
+                        "spin_file": base_spin,
+                        "prisms": {},
+                    }
+
+                    for i in range(2, total_prisms + 1):
+                        if REGIONS.get("btn_prism_next"):
+                            click_at(*region_center(REGIONS["btn_prism_next"]),
+                                     delay=DELAYS.get("after_prism_nav", 0.4))
+                        recolor_raw = ocr(REGIONS["skin_name"]).strip()
+                        recolor_slug = make_id(god_name_raw + " " + recolor_raw)
+                        recolor_file = f"{recolor_slug}.webp"
+                        recolor_spin = f"{recolor_slug}-spin.webp"
+                        _skin_files += [OUTPUT_DIR / recolor_file, OUTPUT_DIR / recolor_spin]
+                        s, k = _log_save(save_image(OUTPUT_DIR / recolor_file, dry_run),
+                                         recolor_file, f"prism {i}/{total_prisms}")
+                        saved += s; skipped += k
+                        s, k = _log_save(capture_spin_webp(OUTPUT_DIR / recolor_spin, dry_run),
+                                         recolor_spin, f"spin prism {i}/{total_prisms}")
+                        saved += s; skipped += k
+
+                        skin_entry["prisms"][recolor_slug] = {
+                            "name": recolor_raw,
+                            "index": i - 1,   # 1-based among recolors
+                            "file": recolor_file,
+                            "spin_file": recolor_spin,
+                        }
+
+                    god_skins.append(skin_entry)
+
+                else:
+                    slug = make_id(god_name_raw + " " + skin_name_raw)
+                    filename = f"{slug}.webp"
+                    spin_file = f"{slug}-spin.webp"
+                    _skin_files += [OUTPUT_DIR / filename, OUTPUT_DIR / spin_file]
+                    s, k = _log_save(save_image(OUTPUT_DIR / filename, dry_run), filename)
+                    saved += s; skipped += k
+                    s, k = _log_save(capture_spin_webp(OUTPUT_DIR / spin_file, dry_run), spin_file,
+                                     "spin")
+                    saved += s; skipped += k
+
+                    god_skins.append({
+                        "name": skin_name_raw,
+                        "file": filename,
+                        "spin_file": spin_file,
+                        "prisms": {},
                     })
 
-                god_skins.append(skin_entry)
-
-            else:
-                slug = make_id(god_name_raw + " " + skin_name_raw)
-                filename = f"{slug}.webp"
-                spin_file = f"{slug}-spin.webp"
-                s, k = _log_save(save_image(OUTPUT_DIR / filename, dry_run), filename)
-                saved += s; skipped += k
-                s, k = _log_save(capture_spin_webp(OUTPUT_DIR / spin_file, dry_run), spin_file,
-                                 "spin")
-                saved += s; skipped += k
-
-                god_skins.append({
-                    "name": skin_name_raw,
-                    "file": filename,
-                    "spin_file": spin_file,
-                    "prisms": [],
-                })
+            except KeyboardInterrupt:
+                removed = [f for f in _skin_files if f.exists()]
+                for f in removed:
+                    f.unlink()
+                    print(f"\n  cleanup  {f.name}")
+                print("\nInterrupted. Partial files removed. Manifest not updated.")
+                raise
 
         if not scroll_grid_down():
             print("\nReached end of skin grid.")
@@ -577,7 +608,8 @@ def process_current_god(dry_run: bool = False):
         print(f"  --- scrolled to page {page + 1} ---")
 
     _update_manifest(god_name_raw, god_skins, dry_run)
-    print(f"\nDone. saved={saved} skipped={skipped}")
+    elapsed = time.monotonic() - run_start
+    print(f"\nDone. saved={saved} skipped={skipped}  ({_fmt_elapsed(elapsed)})")
 
 
 def process_all_gods(dry_run: bool = False):
@@ -588,33 +620,36 @@ def process_all_gods(dry_run: bool = False):
         process_current_god(dry_run=dry_run)
         return
 
-    seen: set[str] = set()
+    start_god: str | None = None
     god_number = 0
+    all_start = time.monotonic()
 
     while True:
-        # OCR the current god name before processing
-        current_god = ocr(REGIONS["god_name"]).strip()
-        if not current_god:
-            current_god = "unknown"
+        current_god = ocr(REGIONS["god_name"]).strip() or "unknown"
 
-        if current_god in seen:
-            print(f"\nWrapped back to {current_god!r} — all gods processed.")
+        if start_god is None:
+            # Record the god we started on; stop when we return to it.
+            start_god = current_god
+        elif current_god == start_god:
+            print(f"\nWrapped back to {start_god!r} — full roster processed.")
             break
 
-        seen.add(current_god)
         god_number += 1
         print(f"\n{'='*60}")
-        print(f"God {god_number}: {current_god}")
+        print(f"God {god_number}: {current_god}  (total elapsed: {_fmt_elapsed(time.monotonic() - all_start)})")
         print(f"{'='*60}")
 
+        god_start = time.monotonic()
         process_current_god(dry_run=dry_run)
+        print(f"  → {current_god} finished in {_fmt_elapsed(time.monotonic() - god_start)}")
 
         # Advance to the next god
         print(f"\nAdvancing to next god...")
         click_at(*region_center(REGIONS["btn_next_god"]),
                  delay=DELAYS.get("after_god_select", 1.5))
 
-    print(f"\nAll done. Processed {len(seen)} god(s).")
+    total = _fmt_elapsed(time.monotonic() - all_start)
+    print(f"\nAll done. Processed {god_number} god(s) in {total}.")
 
 
 def focus_smite_window():
@@ -641,7 +676,11 @@ if __name__ == "__main__":
     if dry_run:
         print("DRY RUN — no files will be written.\n")
     focus_smite_window()
-    if all_gods:
-        process_all_gods(dry_run=dry_run)
-    else:
-        process_current_god(dry_run=dry_run)
+    try:
+        if all_gods:
+            process_all_gods(dry_run=dry_run)
+        else:
+            process_current_god(dry_run=dry_run)
+    except KeyboardInterrupt:
+        print("\nStopped.")
+        sys.exit(0)
