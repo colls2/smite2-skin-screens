@@ -71,3 +71,19 @@
 **Reasons:**
 - Mirrors the conceptual hierarchy (god → skin)
 - Easy to browse, diff, and upload incrementally
+
+---
+
+## Note: Smite 2 UI fonts (from game files via FModel)
+
+Found in `StyleGuide/Fonts`:
+
+| Font | Role |
+|------|------|
+| **TitanForged** | Display font — god names, skin names. Stylized; most likely to cause OCR errors. |
+| **Oswald** | Condensed sans-serif — likely secondary headings. |
+| **TrajanPro3 / TrajanasSans** | Serif — decorative headings. |
+| **Lato** | Clean sans-serif — UI body text. Tesseract handles well. |
+| **NotoSans / NotoSansJapanese** | General-purpose UI text. Tesseract handles well. |
+
+If OCR accuracy on name regions is poor, training a custom Tesseract model on rendered TitanForged samples is the recommended next step (the font files are available from the game assets).
