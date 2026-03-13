@@ -1,12 +1,7 @@
-# Scroll wheel clicks to advance the grid by one row.
-# One row is between 7 and 8 clicks on this setup, so 14 (= ~2 rows) is used
-# to let drift average out. Increase if the grid undershoots, decrease if it overshoots.
-scroll_clicks_per_row: 14
-
 delays:
   after_click: 0.5
   after_god_select: 1.5
-  after_skin_select: 1.0
+  after_skin_select: 3.0  # time for model to fully load after clicking a skin card
 grid:
   columns: 3
   gap_x: 13
@@ -38,15 +33,20 @@ regions:
   - 372
   - 659
   - 755
-  scrollbar_track: [0, 0, 0, 0]   # thin vertical strip on the right edge of the grid
   model_view:
-  - 862
-  - 224
-  - 747
-  - 1115
+  - 857
+  - 107
+  - 830
+  - 1233
+  scrollbar_track:
+  - 846
+  - 379
+  - 4
+  - 739
   skin_name:
   - 1910
   - 216
   - 532
   - 116
+scroll_clicks_per_row: 14
 tesseract_path: C:\Program Files\Tesseract-OCR\tesseract.exe
