@@ -1,4 +1,4 @@
-# s2-skin-screenshotter
+# smite2-skin-screens
 
 Automates capturing skin screenshots and animated previews from Smite 2 for use on the community wiki.
 
