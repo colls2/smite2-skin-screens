@@ -18,7 +18,9 @@ Navigate to the god's skin selection screen in-game, then run:
 
 The script will iterate every skin card in the grid (scrolling as needed),
 click each one, OCR the skin name, and save the model view to:
-    output/<GodName>/<SkinName>.png
+    output/<god-skin-slug>.png
+
+A manifest is written / merged to output/manifest.json after each god.
 """
 
 import json
@@ -105,23 +107,12 @@ def ocr(region: list) -> str:
     return text
 
 
-def sanitize_filename(name: str) -> str:
-    """Turn OCR text into a safe filename component."""
-    name = name.strip()
-    name = re.sub(r"[^\w\s\-]", "", name)   # keep word chars, spaces, hyphens
-    name = re.sub(r"\s+", "_", name)         # spaces → underscores
-    return name or "unknown"
-
-
-def images_equal(a: Image.Image, b: Image.Image, threshold: float = 0.995) -> bool:
-    """Return True if two images are visually the same (>= threshold fraction of matching pixels)."""
-    arr_a = np.array(a.convert("RGB"), dtype=np.float32)
-    arr_b = np.array(b.convert("RGB"), dtype=np.float32)
-    if arr_a.shape != arr_b.shape:
-        return False
-    diff = np.abs(arr_a - arr_b)
-    matching = np.mean(diff < 5)   # pixels within 5 grey levels count as equal
-    return float(matching) >= threshold
+def make_id(name: str) -> str:
+    """Produce a URL/filename-safe slug from a display name."""
+    name = name.lower()
+    name = re.sub(r"[^a-z0-9\s-]", "", name)
+    name = re.sub(r"\s+", "-", name)
+    return name.strip("-") or "unknown"
 
 
 # ── Grid iteration ────────────────────────────────────────────────────────────
@@ -259,9 +250,52 @@ def save_image(dest: Path, dry_run: bool) -> str:
         return "skipped"
     if dry_run:
         return "dry"
-    dest.parent.mkdir(parents=True, exist_ok=True)
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
     capture(REGIONS["model_view"]).save(dest)
     return "saved"
+
+
+def _log_save(status: str, filename: str, label: str = "") -> tuple[int, int]:
+    """Print a save/skip/dry line and return (saved_delta, skipped_delta)."""
+    suffix = f" ({label})" if label else ""
+    if status == "skipped":
+        print(f"  skip  {filename}{suffix} (already exists)")
+        return 0, 1
+    if status == "dry":
+        print(f"  [dry] would save → {filename}{suffix}")
+        return 1, 0
+    print(f"  saved {filename}{suffix}")
+    return 1, 0
+
+
+def _update_manifest(god_name_raw: str, skins: list[dict], dry_run: bool):
+    """Merge skins into the global output/manifest.json."""
+    manifest_path = OUTPUT_DIR / "manifest.json"
+    try:
+        data = json.loads(manifest_path.read_text(encoding="utf-8")) if manifest_path.exists() else {}
+    except Exception:
+        data = {}
+
+    data.setdefault("meta", {"tool": "s2-skin-screenshotter"})
+    data["meta"]["last_updated"] = time.strftime("%Y-%m-%d")
+    data.setdefault("gods", [])
+
+    god_entry = next((g for g in data["gods"] if g["name"] == god_name_raw), None)
+    if god_entry is None:
+        god_entry = {"name": god_name_raw, "skins": []}
+        data["gods"].append(god_entry)
+
+    by_name = {s["name"]: s for s in god_entry["skins"]}
+    for skin in skins:
+        by_name[skin["name"]] = skin
+    god_entry["skins"] = list(by_name.values())
+
+    if not dry_run:
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(
+            json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8"
+        )
+        print(f"Manifest → {manifest_path}")
 
 
 def process_current_god(dry_run: bool = False):
@@ -276,78 +310,64 @@ def process_current_god(dry_run: bool = False):
     saved = 0
     skipped = 0
     page = 0
-    god_name = "unknown"
-    manifest: list[dict] = []
+    god_name_raw = "unknown"
+    god_skins: list[dict] = []
 
     while True:
         for cx, cy in card_centers:
             click_at(cx, cy, delay=DELAYS["after_skin_select"])
 
-            god_name  = sanitize_filename(ocr(REGIONS["god_name"]))
-            skin_name = sanitize_filename(ocr(REGIONS["skin_name"]))
+            god_name_raw = ocr(REGIONS["god_name"]).strip()
+            skin_name_raw = ocr(REGIONS["skin_name"]).strip()
 
-            cur_prism, total_prisms = get_prism_info()
+            _cur, total_prisms = get_prism_info()
 
             if total_prisms > 0:
-                # Card has prism variants. Prism 1/N is the base skin; 2..N are recolors.
-                skin_entry: dict = {"prisms": []}
+                # Prism 1/N is the base skin; prisms 2..N are recolors with names
+                # of the form "Base Skin Name - Recolor Name".
                 navigate_to_first_prism()
 
-                for i in range(1, total_prisms + 1):
-                    prism_name_raw = ocr(REGIONS["skin_name"])
-                    prism_name = sanitize_filename(prism_name_raw)
-                    dest = OUTPUT_DIR / god_name / f"{prism_name}.png"
-                    status = save_image(dest, dry_run)
+                base_name_raw = ocr(REGIONS["skin_name"]).strip()
+                base_slug = make_id(god_name_raw + " - " + base_name_raw)
+                base_file = f"{base_slug}.png"
+                s, k = _log_save(save_image(OUTPUT_DIR / base_file, dry_run), base_file,
+                                 f"prism 1/{total_prisms}")
+                saved += s; skipped += k
 
-                    label = f"{god_name}/{prism_name}.png (prism {i}/{total_prisms})"
-                    if status == "skipped":
-                        print(f"  skip  {label} (already exists)")
-                        skipped += 1
-                    elif status == "dry":
-                        print(f"  [dry] would save → {label}")
-                        saved += 1
-                    else:
-                        print(f"  saved {label}")
-                        saved += 1
+                skin_entry: dict = {
+                    "name": base_name_raw,
+                    "file": base_file,
+                    "prisms": [],
+                }
 
-                    skin_entry["prisms"].append({
-                        "name": prism_name_raw.strip(),
-                        "index": i,
-                        "file": f"{god_name}/{prism_name}.png",
-                    })
-
-                    if i == 1:
-                        # Record base skin fields from first prism
-                        skin_entry["name"] = prism_name_raw.strip()
-                        skin_entry["file"] = f"{god_name}/{prism_name}.png"
-                        skin_entry["is_prism_skin"] = True
-
-                    if i < total_prisms and REGIONS.get("btn_prism_next"):
+                for i in range(2, total_prisms + 1):
+                    if REGIONS.get("btn_prism_next"):
                         click_at(*region_center(REGIONS["btn_prism_next"]),
                                  delay=DELAYS.get("after_prism_nav", 0.4))
+                    recolor_raw = ocr(REGIONS["skin_name"]).strip()
+                    recolor_slug = make_id(god_name_raw + " - " + recolor_raw)
+                    recolor_file = f"{recolor_slug}.png"
+                    s, k = _log_save(save_image(OUTPUT_DIR / recolor_file, dry_run),
+                                     recolor_file, f"prism {i}/{total_prisms}")
+                    saved += s; skipped += k
 
-                manifest.append(skin_entry)
+                    skin_entry["prisms"].append({
+                        "name": recolor_raw,
+                        "index": i - 1,   # 1-based among recolors
+                        "file": recolor_file,
+                    })
+
+                god_skins.append(skin_entry)
 
             else:
-                # No prisms — single capture.
-                dest = OUTPUT_DIR / god_name / f"{skin_name}.png"
-                status = save_image(dest, dry_run)
+                slug = make_id(god_name_raw + " - " + skin_name_raw)
+                filename = f"{slug}.png"
+                s, k = _log_save(save_image(OUTPUT_DIR / filename, dry_run), filename)
+                saved += s; skipped += k
 
-                label = f"{god_name}/{skin_name}.png"
-                if status == "skipped":
-                    print(f"  skip  {label} (already exists)")
-                    skipped += 1
-                elif status == "dry":
-                    print(f"  [dry] would save → {label}")
-                    saved += 1
-                else:
-                    print(f"  saved {label}")
-                    saved += 1
-
-                manifest.append({
-                    "name": skin_name,
-                    "file": f"{god_name}/{skin_name}.png",
-                    "is_prism_skin": False,
+                god_skins.append({
+                    "name": skin_name_raw,
+                    "file": filename,
                     "prisms": [],
                 })
 
@@ -358,27 +378,7 @@ def process_current_god(dry_run: bool = False):
         page += 1
         print(f"  --- scrolled to page {page + 1} ---")
 
-    # Save per-god manifest
-    if manifest:
-        god_dir = OUTPUT_DIR / god_name
-        god_dir.mkdir(parents=True, exist_ok=True)
-        manifest_path = god_dir / "skins.json"
-        existing: list = []
-        if manifest_path.exists():
-            try:
-                existing = json.loads(manifest_path.read_text(encoding="utf-8"))
-            except Exception:
-                pass
-        # Merge: update existing entries by name, append new ones
-        by_name = {e["name"]: e for e in existing}
-        for entry in manifest:
-            by_name[entry["name"]] = entry
-        manifest_path.write_text(
-            json.dumps(list(by_name.values()), indent=2, ensure_ascii=False),
-            encoding="utf-8",
-        )
-        print(f"Manifest saved → {manifest_path}")
-
+    _update_manifest(god_name_raw, god_skins, dry_run)
     print(f"\nDone. saved={saved} skipped={skipped}")
 
 
