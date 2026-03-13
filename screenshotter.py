@@ -159,13 +159,46 @@ def find_thumb_bounds() -> tuple[int, int] | None:
     return int(thumb_rows[0]) + t, int(thumb_rows[-1]) + t
 
 
+def detect_scrollable() -> bool:
+    """
+    Detect whether the skin grid has more than two rows of cards (i.e. needs scrolling).
+
+    Strategy: click the first card (top-left), OCR its skin name, then click 20px
+    into the top of the third row (which is partially visible but not in
+    visible_card_centers). If the skin name changes, a card is present there →
+    grid is scrollable. If unchanged → empty space → no scrollbar.
+
+    Works regardless of card art animation because we compare text names, not images.
+    """
+    first_cx = CARD_LEFT + CARD_W // 2
+    first_cy = CARD_TOP + CARD_H // 2
+    click_at(first_cx, first_cy, delay=DELAYS["after_skin_select"])
+    name_before = ocr(REGIONS["skin_name"]).strip()
+
+    # 20 px into the top of the third row, same column
+    third_row_cy = CARD_TOP + 2 * (CARD_H + GAP_Y) + 20
+    click_at(first_cx, third_row_cy, delay=DELAYS["after_skin_select"])
+    name_after = ocr(REGIONS["skin_name"]).strip()
+
+    scrollable = name_after.lower() != name_before.lower()
+    mode = "SCROLLABLE" if scrollable else "SINGLE PAGE"
+    print(f"  Mode: {mode}  (row-1={name_before!r}  row-3={name_after!r})")
+
+    # Leave the first card selected
+    click_at(first_cx, first_cy, delay=DELAYS["after_skin_select"])
+    return scrollable
+
+
 def scroll_grid_to_top():
-    """Drag the scrollbar thumb to the top of the track. No-op if no scrollbar."""
+    """Drag the scrollbar thumb to the top of the track. No-op if no thumb found."""
     bounds = find_thumb_bounds()
     if bounds is None:
-        return  # no scrollbar — grid fits on one page, nothing to scroll
+        print("  [scroll_to_top] no thumb detected — skipping")
+        return
     thumb_top, thumb_bottom = bounds
+    span = thumb_bottom - thumb_top
     l, t, w, h = REGIONS["scrollbar_track"]
+    print(f"  [scroll_to_top] thumb span={span}px  y={thumb_top}–{thumb_bottom}")
     cx = l + w // 2
     thumb_cy = (thumb_top + thumb_bottom) // 2
     pyautogui.moveTo(cx, thumb_cy, duration=0.1)
@@ -176,36 +209,38 @@ def scroll_grid_to_top():
 def scroll_grid_down() -> bool:
     """
     Click just below the scrollbar thumb to page-down.
-    Returns False if the grid didn't scroll (no real scrollbar, or already at bottom).
+    Returns False if the thumb didn't move (no real scrollbar, or already at bottom).
 
-    Uses thumb-position comparison rather than grid-image comparison because the
-    animated 3D model background causes the grid_area image to change between frames
-    even when no scroll occurs, making image-diff checks unreliable.
+    The "at bottom" early return was removed: when the panel border fills the full
+    track height, thumb_bottom ≈ track_bottom and the old check fired immediately
+    without ever attempting a click. Now we always attempt the click and verify by
+    checking whether the thumb position actually changed.
     """
     before_bounds = find_thumb_bounds()
     if before_bounds is None:
+        print("  [scroll_down] no thumb detected")
         return False
 
     thumb_top, thumb_bottom = before_bounds
     l, t, w, h = REGIONS["scrollbar_track"]
     track_bottom = t + h
 
-    if thumb_bottom >= track_bottom - 8:
-        return False   # thumb already at the bottom
-
-    # Click just below the thumb — standard Windows scrollbar "page down"
+    # Clamp the click to stay within the track, even if thumb_bottom ≈ track_bottom
+    click_y = min(thumb_bottom + 8, track_bottom - 2)
     cx = l + w // 2
-    pyautogui.click(cx, thumb_bottom + 8)
+    pyautogui.click(cx, click_y)
     time.sleep(0.4)
 
     after_bounds = find_thumb_bounds()
     if after_bounds is None:
+        print("  [scroll_down] thumb disappeared after click")
         return False
 
-    # If the thumb didn't move, the "thumb" was a static UI element
-    # (e.g., the decorative panel border) — not a real scrollbar thumb
-    if abs(after_bounds[0] - before_bounds[0]) < 3:
-        return False
+    delta = after_bounds[0] - before_bounds[0]
+    print(f"  [scroll_down] thumb moved {delta:+}px  (before={before_bounds[0]}, after={after_bounds[0]})")
+
+    if abs(delta) < 3:
+        return False   # static UI element (panel border) or already at bottom
 
     return True
 
@@ -300,7 +335,10 @@ def process_current_god(dry_run: bool = False):
           f"({CARD_W}×{CARD_H}px, gap {GAP_X}px, {COLUMNS} cols), "
           f"scrolling via scrollbar ({ROWS_PER_SCROLL} rows per step)")
 
-    print("\nScrolling grid to top...")
+    print("\nDetecting scroll mode...")
+    scrollable = detect_scrollable()
+
+    print("Scrolling grid to top...")
     scroll_grid_to_top()
 
     saved = 0
