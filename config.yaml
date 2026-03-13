@@ -38,6 +38,7 @@ regions:
   - 372
   - 659
   - 755
+  scrollbar_track: [0, 0, 0, 0]   # thin vertical strip on the right edge of the grid
   model_view:
   - 862
   - 224

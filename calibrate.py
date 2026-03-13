@@ -42,8 +42,9 @@ REGIONS_ORDER = [
     ("model_view",  "3D model display area (updates when a card is clicked)"),
     ("btn_next_god", "Next-god button"),
     ("btn_prev_god", "Previous-god button"),
-    ("grid_area",   "Scrollable skin card grid — draw around the entire grid container"),
-    ("first_card",  "First card in the grid (top-left) — used for card size"),
+    ("grid_area",      "Scrollable skin card grid — draw around the entire grid container"),
+    ("scrollbar_track", "Scrollbar track — the thin vertical strip on the right edge of the grid (full height, thumb+track)"),
+    ("first_card",     "First card in the grid (top-left) — used for card size"),
     # _second_card is a calibration-only helper: used to compute gap_x/gap_y, not saved
     ("_second_card", "Card immediately to the RIGHT of the first — used to compute card gap"),
 ]

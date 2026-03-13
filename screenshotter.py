@@ -70,9 +70,7 @@ COLUMNS     = GRID_CFG["columns"]
 _ga         = REGIONS["grid_area"]    # [left, top, w, h]
 GRID_BOTTOM = _ga[1] + _ga[3]
 
-SCROLL_CLICKS      = CFG.get("scroll_clicks_per_row", 14)
-# Rows advanced per scroll — 14 clicks ≈ 2 rows, so we process 2 rows per page
-ROWS_PER_SCROLL    = round(SCROLL_CLICKS / 7)   # 7 clicks ≈ 1 row on this setup
+ROWS_PER_SCROLL    = 2   # rows advanced per scroll step (matches visible rows)
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -148,21 +146,62 @@ def visible_card_centers() -> list[tuple[int, int]]:
     return centers
 
 
-def scroll_grid_down():
-    """Scroll the skin grid down by ROWS_PER_SCROLL rows."""
-    gx, gy = region_center(REGIONS["grid_area"])
-    pyautogui.moveTo(gx, gy, duration=0.1)
-    pyautogui.scroll(-SCROLL_CLICKS)
-    time.sleep(0.4)   # let the scroll animation settle
+def find_thumb_bounds() -> tuple[int, int] | None:
+    """
+    Find the scrollbar thumb top/bottom Y in screen coordinates.
+    The thumb is identified as the brightest continuous region in the track.
+    Returns (thumb_top_y, thumb_bottom_y) or None if detection fails.
+    """
+    track = REGIONS["scrollbar_track"]
+    l, t, w, h = track
+    arr = np.array(capture(track).convert("L"), dtype=np.float32)  # grayscale
+
+    row_brightness = arr.mean(axis=1)
+    threshold = row_brightness.mean() * 1.2   # thumb is brighter than the track bg
+    thumb_rows = np.where(row_brightness > threshold)[0]
+
+    if len(thumb_rows) == 0:
+        return None
+    return int(thumb_rows[0]) + t, int(thumb_rows[-1]) + t
 
 
 def scroll_grid_to_top():
-    """Scroll the grid all the way to the top."""
-    gx, gy = region_center(REGIONS["grid_area"])
-    pyautogui.moveTo(gx, gy, duration=0.1)
-    for _ in range(30):                # enough to reach top from anywhere
-        pyautogui.scroll(5)
+    """Drag the scrollbar thumb to the top of the track."""
+    bounds = find_thumb_bounds()
+    if bounds is None:
+        print("  Warning: could not detect scrollbar thumb for scroll-to-top.")
+        return
+    thumb_top, thumb_bottom = bounds
+    l, t, w, h = REGIONS["scrollbar_track"]
+    cx = l + w // 2
+    thumb_cy = (thumb_top + thumb_bottom) // 2
+    pyautogui.moveTo(cx, thumb_cy, duration=0.1)
+    pyautogui.dragTo(cx, t + 3, duration=0.4, button="left")
     time.sleep(0.4)
+
+
+def scroll_grid_down() -> bool:
+    """
+    Click just below the scrollbar thumb to page-down.
+    Returns False if the thumb is already at the bottom (no more content).
+    """
+    bounds = find_thumb_bounds()
+    if bounds is None:
+        print("  Warning: could not detect scrollbar thumb.")
+        return False
+
+    thumb_top, thumb_bottom = bounds
+    l, t, w, h = REGIONS["scrollbar_track"]
+    track_bottom = t + h
+
+    if thumb_bottom >= track_bottom - 8:
+        return False   # already at the bottom
+
+    # Click just below the thumb — standard Windows scrollbar "page down"
+    cx = l + w // 2
+    pyautogui.click(cx, thumb_bottom + 8)
+    time.sleep(0.4)
+    return True
 
 
 # ── Main flow ─────────────────────────────────────────────────────────────────
@@ -171,7 +210,7 @@ def process_current_god(dry_run: bool = False):
     card_centers = visible_card_centers()
     print(f"Grid geometry: {len(card_centers)} card slots visible per page "
           f"({CARD_W}×{CARD_H}px, gap {GAP_X}px, {COLUMNS} cols), "
-          f"scrolling {SCROLL_CLICKS} clicks ≈ {ROWS_PER_SCROLL} rows per step")
+          f"scrolling via scrollbar ({ROWS_PER_SCROLL} rows per step)")
 
     print("\nScrolling grid to top...")
     scroll_grid_to_top()
@@ -207,12 +246,15 @@ def process_current_god(dry_run: bool = False):
             print(f"  saved {dest}")
             saved += 1
 
-        # Scroll and check for end
-        scroll_grid_down()
-        after_scroll = capture(REGIONS["grid_area"])
+        # Scroll down; stop if scrollbar is already at the bottom
+        if not scroll_grid_down():
+            print("\nReached end of skin grid (scrollbar at bottom).")
+            break
 
+        # Fallback: if the grid content didn't change despite the scroll, stop
+        after_scroll = capture(REGIONS["grid_area"])
         if images_equal(before_scroll, after_scroll):
-            print("\nReached end of skin grid.")
+            print("\nReached end of skin grid (grid content unchanged).")
             break
 
         page += 1
