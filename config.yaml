@@ -1,0 +1,24 @@
+# s2-skin-screenshotter configuration
+
+# Path to Tesseract binary (Windows; ignored if tesseract is on PATH)
+tesseract_path: "C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
+
+# Output directory for saved screenshots
+output_dir: "output"
+
+# Delays (seconds) to wait after UI interactions before proceeding
+delays:
+  after_click: 0.5        # after any button click
+  after_god_select: 1.5   # after switching to a new god
+  after_skin_select: 1.0  # after switching to a new skin
+
+# Screen regions — all values are [left, top, width, height] in pixels
+# These are placeholders; run the calibration script (Phase 2) to fill them in
+regions:
+  god_name:   [0, 0, 0, 0]   # text area showing the current god's name
+  skin_name:  [0, 0, 0, 0]   # text area showing the current skin's name
+  skin_card:  [0, 0, 0, 0]   # the portrait/card to screenshot for the wiki
+  btn_next_god:  [0, 0, 0, 0]
+  btn_prev_god:  [0, 0, 0, 0]
+  btn_next_skin: [0, 0, 0, 0]
+  btn_prev_skin: [0, 0, 0, 0]

@@ -2,10 +2,10 @@
 
 ## Phase 1: Setup & Foundations
 
-- [ ] Initialize Python project with `pyproject.toml` or `requirements.txt` (pyautogui, pillow, pytesseract, opencv-python)
-- [ ] Verify pyautogui can detect and focus the Smite 2 game window on Windows
-- [ ] Create a config file (`config.yaml` or similar) to store screen region coordinates, paths, delays, and other tunables
-- [ ] Write a small utility to capture and save a full screenshot — smoke test that screen capture works
+- [x] ~~Initialize Python project with `pyproject.toml` or `requirements.txt`~~ — using uv inline script deps instead
+- [x] Verify pyautogui can detect and focus the Smite 2 game window on Windows — `find_window.py`
+- [x] Create a config file (`config.yaml` or similar) to store screen region coordinates, paths, delays, and other tunables
+- [x] Write a small utility to capture and save a full screenshot — done in Phase 0 (`check_deps.py`)
 
 ## Phase 2: Region Calibration
 
