@@ -4,9 +4,27 @@ Automates capturing skin screenshots from Smite 2 for use on the community wiki.
 
 The tool navigates the in-game cosmetics UI, reads god and skin names via OCR, and saves cropped screenshots organized by god and skin name.
 
+## Prerequisites
+
+### uv
+
+Install [uv](https://docs.astral.sh/uv/) for Python and dependency management.
+
+### Tesseract OCR
+
+Tesseract is a native binary and must be installed separately.
+
+1. Download the installer from the [UB Mannheim builds](https://github.com/UB-Mannheim/tesseract/wiki) (the official Windows builds) — grab the latest `tesseract-ocr-w64-setup-*.exe`
+2. Run the installer; the default path is `C:\Program Files\Tesseract-OCR`
+3. Add Tesseract to your PATH:
+   - Open Start → search **"Edit the system environment variables"**
+   - Click **Environment Variables** → under *System variables* select `Path` → **Edit**
+   - Add `C:\Program Files\Tesseract-OCR`
+   - Click OK and restart your terminal
+
 ## Usage
 
-Requires [uv](https://docs.astral.sh/uv/). Run the hello-world smoke test:
+Run the smoke test to verify all dependencies:
 
 ```bash
 uv run check_deps.py
