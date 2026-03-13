@@ -190,59 +190,61 @@ def detect_scrollable() -> bool:
 
 
 def scroll_grid_to_top():
-    """Drag the scrollbar thumb to the top of the track. No-op if no thumb found."""
-    bounds = find_thumb_bounds()
-    if bounds is None:
-        print("  [scroll_to_top] no thumb detected — skipping")
-        return
-    thumb_top, thumb_bottom = bounds
-    span = thumb_bottom - thumb_top
+    """
+    Scroll the skin grid back to the top.
+
+    Tries to drag the scrollbar thumb to the top; falls back to clicking the top
+    of the track (which is the standard Windows scroll-to-top behaviour when there
+    is no detectable thumb).
+    """
     l, t, w, h = REGIONS["scrollbar_track"]
-    print(f"  [scroll_to_top] thumb span={span}px  y={thumb_top}–{thumb_bottom}")
     cx = l + w // 2
-    thumb_cy = (thumb_top + thumb_bottom) // 2
-    pyautogui.moveTo(cx, thumb_cy, duration=0.1)
-    pyautogui.dragTo(cx, t + 3, duration=0.4, button="left")
-    time.sleep(0.4)
+    bounds = find_thumb_bounds()
+    if bounds is not None:
+        thumb_top, thumb_bottom = bounds
+        thumb_cy = (thumb_top + thumb_bottom) // 2
+        pyautogui.moveTo(cx, thumb_cy, duration=0.1)
+        pyautogui.dragTo(cx, t + 3, duration=0.4, button="left")
+        time.sleep(0.4)
+        print(f"  [scroll_to_top] dragged thumb (span={thumb_bottom - thumb_top}px) to top")
+    else:
+        pyautogui.click(cx, t + 3)
+        time.sleep(0.3)
+        print("  [scroll_to_top] no thumb — clicked track top as fallback")
 
 
 def scroll_grid_down() -> bool:
     """
-    Click just below the scrollbar thumb to page-down.
-    Returns False if the thumb didn't move (no real scrollbar, or already at bottom).
+    Page-down the skin grid. Returns True if the grid actually scrolled.
 
-    The "at bottom" early return was removed: when the panel border fills the full
-    track height, thumb_bottom ≈ track_bottom and the old check fired immediately
-    without ever attempting a click. Now we always attempt the click and verify by
-    checking whether the thumb position actually changed.
+    Uses the first card's skin name as the scroll oracle — reliable even when
+    the scrollbar thumb can't be detected visually (e.g. theme-matched track).
+    Falls back to clicking the lower quarter of the track when no thumb is found.
     """
-    before_bounds = find_thumb_bounds()
-    if before_bounds is None:
-        print("  [scroll_down] no thumb detected")
-        return False
+    first_cx = CARD_LEFT + CARD_W // 2
+    first_cy = CARD_TOP + CARD_H // 2
+    click_at(first_cx, first_cy, delay=0.3)
+    name_before = ocr(REGIONS["skin_name"]).strip()
 
-    thumb_top, thumb_bottom = before_bounds
     l, t, w, h = REGIONS["scrollbar_track"]
-    track_bottom = t + h
+    bounds = find_thumb_bounds()
+    if bounds is not None:
+        click_y = min(bounds[1] + 8, t + h - 2)
+        print(f"  [scroll_down] thumb at {bounds[0]}–{bounds[1]}, clicking y={click_y}")
+    else:
+        click_y = t + (h * 3 // 4)   # lower quarter of track → page-down zone
+        print(f"  [scroll_down] no thumb, clicking lower track y={click_y}")
 
-    # Clamp the click to stay within the track, even if thumb_bottom ≈ track_bottom
-    click_y = min(thumb_bottom + 8, track_bottom - 2)
-    cx = l + w // 2
-    pyautogui.click(cx, click_y)
+    pyautogui.click(l + w // 2, click_y)
     time.sleep(0.4)
 
-    after_bounds = find_thumb_bounds()
-    if after_bounds is None:
-        print("  [scroll_down] thumb disappeared after click")
-        return False
+    click_at(first_cx, first_cy, delay=0.3)
+    name_after = ocr(REGIONS["skin_name"]).strip()
 
-    delta = after_bounds[0] - before_bounds[0]
-    print(f"  [scroll_down] thumb moved {delta:+}px  (before={before_bounds[0]}, after={after_bounds[0]})")
-
-    if abs(delta) < 3:
-        return False   # static UI element (panel border) or already at bottom
-
-    return True
+    scrolled = name_after.lower() != name_before.lower()
+    marker = "scrolled" if scrolled else "no change"
+    print(f"  [scroll_down] {marker}: {name_before!r} → {name_after!r}")
+    return scrolled
 
 
 # ── Prism helpers ─────────────────────────────────────────────────────────────
