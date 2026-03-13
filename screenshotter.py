@@ -6,6 +6,7 @@
 #   "pytesseract",
 #   "opencv-python",
 #   "pyyaml",
+#   "pywin32",
 # ]
 # ///
 
@@ -23,6 +24,12 @@ click each one, OCR the skin name, and save the model view to:
 import re
 import time
 from pathlib import Path
+
+try:
+    import win32gui, win32con
+    HAS_WIN32 = True
+except ImportError:
+    HAS_WIN32 = False
 
 import cv2
 import numpy as np
@@ -211,9 +218,27 @@ def process_current_god(dry_run: bool = False):
     print(f"\nDone. saved={saved} skipped={skipped}")
 
 
+def focus_smite_window():
+    if not HAS_WIN32:
+        print("Warning: pywin32 not available, cannot focus game window.")
+        return
+    results = []
+    def cb(hwnd, _):
+        if win32gui.IsWindowVisible(hwnd) and "smite 2" in win32gui.GetWindowText(hwnd).lower():
+            results.append(hwnd)
+    win32gui.EnumWindows(cb, None)
+    if not results:
+        print("Warning: Smite 2 window not found. Is the game running?")
+        return
+    win32gui.ShowWindow(results[0], win32con.SW_RESTORE)
+    win32gui.SetForegroundWindow(results[0])
+    time.sleep(0.5)  # let the window come to front before any input
+
+
 if __name__ == "__main__":
     import sys
     dry_run = "--dry-run" in sys.argv
     if dry_run:
         print("DRY RUN — no files will be written.\n")
+    focus_smite_window()
     process_current_god(dry_run=dry_run)
