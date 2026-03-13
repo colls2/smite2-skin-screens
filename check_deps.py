@@ -27,6 +27,11 @@ def check(label: str, fn):
 
 
 print(f"Python {sys.version}\n")
+
+# Point pytesseract at the Tesseract binary if it's not on PATH
+import pytesseract
+pytesseract.pytesseract.tesseract_cmd = r"C:\Program Files\Tesseract-OCR\tesseract.exe"
+
 print("Checking dependencies...")
 
 check("Pillow", lambda: __import__("PIL").__version__)
@@ -39,7 +44,7 @@ check("pyyaml", lambda: __import__("yaml").__version__)
 print("\nScreenshot test...")
 check(
     "PIL.ImageGrab screenshot",
-    lambda: __import__("PIL.ImageGrab", fromlist=["ImageGrab"]).ImageGrab.grab().size,
+    lambda: __import__("PIL.ImageGrab", fromlist=["ImageGrab"]).grab().size,
 )
 
 print("\nDone.")
