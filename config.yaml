@@ -1,31 +1,46 @@
-# s2-skin-screenshotter configuration
-
-# Path to Tesseract binary (Windows; ignored if tesseract is on PATH)
-tesseract_path: "C:\\Program Files\\Tesseract-OCR\\tesseract.exe"
-
-# Output directory for saved screenshots
-output_dir: "output"
-
-# Delays (seconds) to wait after UI interactions before proceeding
 delays:
-  after_click: 0.5        # after any button click
-  after_god_select: 1.5   # after switching to a new god
-  after_skin_select: 1.0  # after clicking a skin card
-
-# Grid geometry — derived by calibrate.py, can be tuned manually
-# gap_x/gap_y: pixels between cards (horizontal / vertical)
+  after_click: 0.5
+  after_god_select: 1.5
+  after_skin_select: 1.0
 grid:
   columns: 3
-  gap_x: 0
-  gap_y: 0
-
-# Screen regions — all values are [left, top, width, height] in pixels
-# Run: uv run calibrate.py  to set these interactively
+  gap_x: 13
+  gap_y: 13
+output_dir: output
 regions:
-  god_name:   [208, 139, 756,  73]   # text area showing the current god's name
-  skin_name:  [1910, 216, 532, 116]  # panel showing skin name / details
-  model_view: [0, 0, 0, 0]           # 3D model display area (changes on skin click)
-  grid_area:  [0, 0, 0, 0]           # scrollable skin card grid container
-  first_card: [0, 0, 0, 0]           # top-left card in the grid (gives card size)
-  btn_next_god: [2443, 324, 1, 1]
-  btn_prev_god: [116,   62, 40, 43]
+  btn_next_god:
+  - 166
+  - 70
+  - 27
+  - 28
+  btn_prev_god:
+  - 129
+  - 72
+  - 20
+  - 22
+  first_card:
+  - 208
+  - 382
+  - 201
+  - 296
+  god_name:
+  - 208
+  - 139
+  - 756
+  - 73
+  grid_area:
+  - 200
+  - 372
+  - 659
+  - 755
+  model_view:
+  - 862
+  - 224
+  - 747
+  - 1115
+  skin_name:
+  - 1910
+  - 216
+  - 532
+  - 116
+tesseract_path: C:\Program Files\Tesseract-OCR\tesseract.exe
