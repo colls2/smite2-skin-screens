@@ -162,6 +162,12 @@ def find_thumb_bounds() -> tuple[int, int] | None:
 
     if len(thumb_rows) == 0:
         return None
+
+    # A real thumb occupies only a fraction of the track.
+    # If >60% of rows are "bright", this is card art bleeding into the region — no scrollbar.
+    if len(thumb_rows) > len(row_brightness) * 0.6:
+        return None
+
     return int(thumb_rows[0]) + t, int(thumb_rows[-1]) + t
 
 
@@ -182,23 +188,31 @@ def scroll_grid_to_top():
 def scroll_grid_down() -> bool:
     """
     Click just below the scrollbar thumb to page-down.
-    Returns False if the thumb is already at the bottom (no more content).
+    Returns False if the grid didn't actually change (no scrollbar, or already at bottom).
     """
     bounds = find_thumb_bounds()
     if bounds is None:
-        return False  # no scrollbar — grid fits on one page, already done
+        return False
 
     thumb_top, thumb_bottom = bounds
     l, t, w, h = REGIONS["scrollbar_track"]
     track_bottom = t + h
 
     if thumb_bottom >= track_bottom - 8:
-        return False   # already at the bottom
+        return False   # thumb already at the bottom
+
+    before = capture(REGIONS["grid_area"])
 
     # Click just below the thumb — standard Windows scrollbar "page down"
     cx = l + w // 2
     pyautogui.click(cx, thumb_bottom + 8)
     time.sleep(0.4)
+
+    # Confirm the grid actually changed — guards against false thumb detections
+    after = capture(REGIONS["grid_area"])
+    if images_equal(before, after):
+        return False  # panel border / decorative frame was mistaken for the thumb
+
     return True
 
 
@@ -218,8 +232,6 @@ def process_current_god(dry_run: bool = False):
     page = 0
 
     while True:
-        before_scroll = capture(REGIONS["grid_area"])
-
         for cx, cy in card_centers:
             click_at(cx, cy, delay=DELAYS["after_skin_select"])
 
@@ -244,15 +256,10 @@ def process_current_god(dry_run: bool = False):
             print(f"  saved {dest}")
             saved += 1
 
-        # Scroll down; stop if scrollbar is already at the bottom
+        # Scroll down — returns False if no scrollbar, already at bottom,
+        # or the click didn't actually change the grid (false thumb detection)
         if not scroll_grid_down():
-            print("\nReached end of skin grid (scrollbar at bottom).")
-            break
-
-        # Fallback: if the grid content didn't change despite the scroll, stop
-        after_scroll = capture(REGIONS["grid_area"])
-        if images_equal(before_scroll, after_scroll):
-            print("\nReached end of skin grid (grid content unchanged).")
+            print("\nReached end of skin grid.")
             break
 
         page += 1
