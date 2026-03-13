@@ -1,5 +1,7 @@
-# How many scroll wheel clicks to advance the grid by one row
-scroll_clicks_per_row: 3
+# Scroll wheel clicks to advance the grid by one row.
+# One row is between 7 and 8 clicks on this setup, so 14 (= ~2 rows) is used
+# to let drift average out. Increase if the grid undershoots, decrease if it overshoots.
+scroll_clicks_per_row: 14
 
 delays:
   after_click: 0.5

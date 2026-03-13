@@ -70,7 +70,9 @@ COLUMNS     = GRID_CFG["columns"]
 _ga         = REGIONS["grid_area"]    # [left, top, w, h]
 GRID_BOTTOM = _ga[1] + _ga[3]
 
-SCROLL_CLICKS_PER_ROW = CFG.get("scroll_clicks_per_row", 3)
+SCROLL_CLICKS      = CFG.get("scroll_clicks_per_row", 14)
+# Rows advanced per scroll — 14 clicks ≈ 2 rows, so we process 2 rows per page
+ROWS_PER_SCROLL    = round(SCROLL_CLICKS / 7)   # 7 clicks ≈ 1 row on this setup
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -147,11 +149,11 @@ def visible_card_centers() -> list[tuple[int, int]]:
 
 
 def scroll_grid_down():
-    """Scroll the skin grid down by one row."""
+    """Scroll the skin grid down by ROWS_PER_SCROLL rows."""
     gx, gy = region_center(REGIONS["grid_area"])
     pyautogui.moveTo(gx, gy, duration=0.1)
-    pyautogui.scroll(-SCROLL_CLICKS_PER_ROW)
-    time.sleep(0.3)
+    pyautogui.scroll(-SCROLL_CLICKS)
+    time.sleep(0.4)   # let the scroll animation settle
 
 
 def scroll_grid_to_top():
@@ -168,7 +170,8 @@ def scroll_grid_to_top():
 def process_current_god(dry_run: bool = False):
     card_centers = visible_card_centers()
     print(f"Grid geometry: {len(card_centers)} card slots visible per page "
-          f"({CARD_W}×{CARD_H}px, gap {GAP_X}px, {COLUMNS} cols)")
+          f"({CARD_W}×{CARD_H}px, gap {GAP_X}px, {COLUMNS} cols), "
+          f"scrolling {SCROLL_CLICKS} clicks ≈ {ROWS_PER_SCROLL} rows per step")
 
     print("\nScrolling grid to top...")
     scroll_grid_to_top()
