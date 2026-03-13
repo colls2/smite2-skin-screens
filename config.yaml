@@ -1,3 +1,6 @@
+# How many scroll wheel clicks to advance the grid by one row
+scroll_clicks_per_row: 3
+
 delays:
   after_click: 0.5
   after_god_select: 1.5
