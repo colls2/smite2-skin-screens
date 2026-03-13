@@ -3,6 +3,4 @@ __pycache__/
 *.pyc
 *.pyo
 output/
-*.png
-*.jpg
 config.local.yaml

@@ -66,6 +66,8 @@ uv run calibrate.py
 
 The tool focuses the game window, takes a full-screen screenshot, and opens a calibration window that fills your screen.
 
+![Calibration window](calibrate.png)
+
 **Controls:**
 - **Left-drag** — draw a rectangle around the region
 - **Left-click** — set a single point (for the mouse park position)
