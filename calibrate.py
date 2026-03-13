@@ -37,14 +37,19 @@ except ImportError:
 CONFIG_PATH = Path("config.yaml")
 
 REGIONS_ORDER = [
-    ("god_name",      "God name text area"),
-    ("skin_name",     "Skin name text area"),
-    ("skin_card",     "Skin card / portrait (the wiki screenshot)"),
-    ("btn_next_god",  "Next-god button"),
-    ("btn_prev_god",  "Previous-god button"),
-    ("btn_next_skin", "Next-skin button"),
-    ("btn_prev_skin", "Previous-skin button"),
+    ("god_name",    "God name text area"),
+    ("skin_name",   "Skin name / details panel (updates when a card is clicked)"),
+    ("model_view",  "3D model display area (updates when a card is clicked)"),
+    ("btn_next_god", "Next-god button"),
+    ("btn_prev_god", "Previous-god button"),
+    ("grid_area",   "Scrollable skin card grid — draw around the entire grid container"),
+    ("first_card",  "First card in the grid (top-left) — used for card size"),
+    # _second_card is a calibration-only helper: used to compute gap_x/gap_y, not saved
+    ("_second_card", "Card immediately to the RIGHT of the first — used to compute card gap"),
 ]
+
+# Keys prefixed with _ are calibration helpers: not written to regions in config
+_HELPER_KEYS = {"_second_card"}
 
 COLORS = ["#e74c3c", "#e67e22", "#f1c40f", "#2ecc71", "#1abc9c", "#3498db", "#9b59b6"]
 
@@ -130,6 +135,8 @@ class Calibrator:
 
     def _draw_existing_regions(self):
         for i, (key, _) in enumerate(self.regions_order):
+            if key in _HELPER_KEYS:
+                continue
             region = self.results.get(key, [0, 0, 0, 0])
             if region and any(v != 0 for v in region):
                 l, t, w, h = region
@@ -219,15 +226,31 @@ if __name__ == "__main__":
     print(f"  Screen size: {screenshot.size}")
 
     cfg = load_config()
-    existing_regions = cfg.get("regions", {r: [0, 0, 0, 0] for r, _ in REGIONS_ORDER})
+    existing_regions = cfg.get("regions", {r: [0, 0, 0, 0] for r, _ in REGIONS_ORDER
+                                             if r not in _HELPER_KEYS})
 
     print("\nOpening calibration window.")
     print("  Left-drag  → define region")
     print("  Right-click → skip (keep current value)\n")
 
     calibrator = Calibrator(screenshot, REGIONS_ORDER, existing_regions)
-    new_regions = calibrator.run()
+    raw = calibrator.run()
 
-    cfg["regions"] = new_regions
+    # Compute gap from first_card and _second_card if both were drawn
+    first  = raw.get("first_card",   [0, 0, 0, 0])
+    second = raw.get("_second_card", [0, 0, 0, 0])
+    if any(v != 0 for v in first) and any(v != 0 for v in second):
+        gap_x = second[0] - (first[0] + first[2])
+        gap_y = gap_x  # assume uniform grid; user can adjust manually
+        cfg.setdefault("grid", {})
+        cfg["grid"]["gap_x"] = gap_x
+        cfg["grid"]["gap_y"] = gap_y
+        print(f"\nComputed card gap: gap_x={gap_x}px, gap_y={gap_y}px (assumed equal)")
+    else:
+        print("\nSkipped gap computation (first_card or _second_card not drawn).")
+
+    # Strip helper keys before saving regions
+    cfg["regions"] = {k: v for k, v in raw.items() if k not in _HELPER_KEYS}
+
     save_config(cfg)
-    print(f"\nSaved to {CONFIG_PATH}")
+    print(f"Saved to {CONFIG_PATH}")
