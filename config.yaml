@@ -1,12 +1,16 @@
 delays:
   after_click: 0.5
   after_god_select: 1.5
-  after_skin_select: 0.5  # increase to ~3s for production runs (see plan.md)
   after_prism_nav: 0.4
+  after_skin_select: 0.5
+  before_screenshot: 3.0
 grid:
   columns: 3
   gap_x: 13
   gap_y: 13
+mouse_park:
+- 1241
+- 16
 output_dir: output
 regions:
   btn_next_god:
@@ -19,6 +23,16 @@ regions:
   - 72
   - 20
   - 22
+  btn_prism_next:
+  - 2259
+  - 1155
+  - 27
+  - 40
+  btn_prism_prev:
+  - 2043
+  - 1153
+  - 32
+  - 40
   first_card:
   - 208
   - 382
@@ -36,9 +50,14 @@ regions:
   - 755
   model_view:
   - 857
-  - 107
-  - 830
-  - 1233
+  - 78
+  - 934
+  - 1344
+  prism_counter:
+  - 2091
+  - 1144
+  - 152
+  - 57
   scrollbar_track:
   - 846
   - 379
@@ -49,21 +68,11 @@ regions:
   - 216
   - 532
   - 116
-  # Prism navigation — calibrate these with calibrate.py
-  prism_counter:
-  - 0
-  - 0
-  - 0
-  - 0
-  btn_prism_prev:
-  - 0
-  - 0
-  - 0
-  - 0
-  btn_prism_next:
-  - 0
-  - 0
-  - 0
-  - 0
 scroll_clicks_per_row: 14
+spin_drag_px: 372
+spin_duration_s: 3.0
+spin_fps: 15
+spin_scale: 0.33
+spin_still_s: 2.0
 tesseract_path: C:\Program Files\Tesseract-OCR\tesseract.exe
+webp_quality: 90

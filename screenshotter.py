@@ -82,6 +82,24 @@ def region_center(region: list) -> tuple[int, int]:
     return l + w // 2, t + h // 2
 
 
+def cursor_is_hand() -> bool:
+    """Return True if the current cursor is the hand/pointer (IDC_HAND = 32649).
+
+    Used to detect whether the mouse is hovering over a clickable card slot vs
+    empty space in the grid. Requires pywin32; returns False on non-Windows or
+    if detection fails (caller treats the slot as valid in that case).
+    """
+    if not HAS_WIN32:
+        return False
+    try:
+        import ctypes
+        _, hcursor, _ = win32gui.GetCursorInfo()
+        hand_cursor = ctypes.windll.user32.LoadCursorW(0, 32649)  # IDC_HAND
+        return bool(hcursor == hand_cursor)
+    except Exception:
+        return False
+
+
 def click_at(x: int, y: int, delay: float = DELAYS["after_click"]):
     pyautogui.moveTo(x, y, duration=0.15)
     pyautogui.click()
@@ -284,14 +302,103 @@ def navigate_to_first_prism():
 
 # ── Main flow ─────────────────────────────────────────────────────────────────
 
+def park_mouse():
+    """Move the mouse to the configured park position (outside the capture area)."""
+    park = CFG.get("mouse_park")
+    if park:
+        pyautogui.moveTo(park[0], park[1], duration=0.1)
+
+
 def save_image(dest: Path, dry_run: bool) -> str:
     """Capture model_view and save to dest. Returns 'saved', 'skipped', or 'dry'."""
     if dest.exists():
         return "skipped"
     if dry_run:
         return "dry"
+    delay = DELAYS.get("before_screenshot", 3.0)
+    if delay > 0:
+        time.sleep(delay)
+    park_mouse()
     OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
-    capture(REGIONS["model_view"]).save(dest)
+    quality = CFG.get("webp_quality", 90)
+    capture(REGIONS["model_view"]).save(dest, format="WEBP", quality=quality)
+    return "saved"
+
+
+def capture_spin_webp(dest: Path, dry_run: bool) -> str:
+    """Capture an animated WebP: still frames then a full rotation drag.
+
+    Sequence: spin_still_s seconds of the front pose (mouse parked), then
+    spin_duration_s seconds of click-drag rotation across the model.
+    The model is assumed to already be loaded (call after save_image).
+    """
+    if dest.exists():
+        return "skipped"
+    if dry_run:
+        return "dry"
+
+    drag_px    = CFG.get("spin_drag_px",    800)
+    spin_dur   = CFG.get("spin_duration_s", 3.0)
+    still_dur  = CFG.get("spin_still_s",    2.0)
+    fps        = CFG.get("spin_fps",        15)
+    scale      = CFG.get("spin_scale",      0.5)
+    quality    = CFG.get("webp_quality",    90)
+
+    frame_ms       = int(1000 / fps)
+    frame_interval = frame_ms / 1000.0
+    still_count    = max(1, int(still_dur * fps))
+
+    park = CFG.get("mouse_park")
+    park_mouse()
+
+    l, t, w, h = REGIONS["model_view"]
+    out_w = max(1, int(w * scale))
+    out_h = max(1, int(h * scale))
+
+    def grab_frame() -> Image.Image:
+        img = capture(REGIONS["model_view"])
+        if scale != 1.0:
+            img = img.resize((out_w, out_h), Image.LANCZOS)
+        return img
+
+    frames: list[Image.Image] = []
+
+    # Still frames — mouse is parked outside the capture region
+    for _ in range(still_count):
+        frames.append(grab_frame())
+        time.sleep(frame_interval)
+
+    # Spin frames — drag as one continuous move; capture frames concurrently in a thread
+    # so the drag duration is exactly spin_dur (not inflated by grab overhead per step).
+    import threading
+
+    spin_frames: list[Image.Image] = []
+    capturing = True
+
+    def _capture_loop():
+        while capturing:
+            spin_frames.append(grab_frame())
+            time.sleep(frame_interval)
+
+    cap_thread = threading.Thread(target=_capture_loop, daemon=True)
+
+    drag_x = park[0] if park else l + w // 2
+    drag_y = park[1] if park else t + h // 2
+    pyautogui.mouseDown(drag_x, drag_y, button="left")
+    cap_thread.start()
+    pyautogui.moveRel(drag_px, 0, duration=spin_dur)
+    capturing = False
+    cap_thread.join()
+    pyautogui.mouseUp()
+
+    frames.extend(spin_frames)
+
+    OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+    frames[0].save(
+        dest, format="WEBP", save_all=True,
+        append_images=frames[1:], duration=frame_ms,
+        quality=quality, loop=0,
+    )
     return "saved"
 
 
@@ -306,6 +413,21 @@ def _log_save(status: str, filename: str, label: str = "") -> tuple[int, int]:
         return 1, 0
     print(f"  saved {filename}{suffix}")
     return 1, 0
+
+
+def _init_manifest(dry_run: bool):
+    """Create output/manifest.json with empty structure if it doesn't exist yet."""
+    manifest_path = OUTPUT_DIR / "manifest.json"
+    if manifest_path.exists():
+        return
+    data = {
+        "meta": {"tool": "s2-skin-screenshotter", "created": time.strftime("%Y-%m-%d")},
+        "gods": [],
+    }
+    if not dry_run:
+        OUTPUT_DIR.mkdir(parents=True, exist_ok=True)
+        manifest_path.write_text(json.dumps(data, indent=2, ensure_ascii=False), encoding="utf-8")
+        print(f"Manifest created → {manifest_path}")
 
 
 def _update_manifest(god_name_raw: str, skins: list[dict], dry_run: bool):
@@ -339,6 +461,8 @@ def _update_manifest(god_name_raw: str, skins: list[dict], dry_run: bool):
 
 
 def process_current_god(dry_run: bool = False):
+    _init_manifest(dry_run)
+
     card_centers = visible_card_centers()
     print(f"Grid geometry: {len(card_centers)} card slots visible per page "
           f"({CARD_W}×{CARD_H}px, gap {GAP_X}px, {COLUMNS} cols), "
@@ -350,6 +474,14 @@ def process_current_god(dry_run: bool = False):
     print("Scrolling grid to top...")
     scroll_grid_to_top()
 
+    # Ensure the first skin is freshly selected before we start capturing.
+    # If skin 1 was already active when we arrived, clicking it again does nothing
+    # and idle animations may have started. Clicking skin 2 → skin 1 forces a reload.
+    c1x, c1y = card_centers[0]
+    c2x, c2y = card_centers[1]
+    click_at(c2x, c2y, delay=DELAYS["after_skin_select"])
+    click_at(c1x, c1y, delay=DELAYS["after_skin_select"])
+
     saved = 0
     skipped = 0
     page = 0
@@ -358,6 +490,14 @@ def process_current_god(dry_run: bool = False):
 
     while True:
         for cx, cy in card_centers:
+            # Hover first to let the OS cursor update, then check if it's the
+            # hand cursor. Arrow cursor = empty padding slot → skip it.
+            pyautogui.moveTo(cx, cy, duration=0.1)
+            time.sleep(0.1)
+            if HAS_WIN32 and not cursor_is_hand():
+                print(f"  skip  slot ({cx},{cy}) — no card (arrow cursor)")
+                continue
+
             click_at(cx, cy, delay=DELAYS["after_skin_select"])
 
             god_name_raw = ocr(REGIONS["god_name"]).strip()
@@ -371,15 +511,20 @@ def process_current_god(dry_run: bool = False):
                 navigate_to_first_prism()
 
                 base_name_raw = ocr(REGIONS["skin_name"]).strip()
-                base_slug = make_id(god_name_raw + " " +base_name_raw)
-                base_file = f"{base_slug}.png"
+                base_slug = make_id(god_name_raw + " " + base_name_raw)
+                base_file = f"{base_slug}.webp"
+                base_spin = f"{base_slug}-spin.webp"
                 s, k = _log_save(save_image(OUTPUT_DIR / base_file, dry_run), base_file,
                                  f"prism 1/{total_prisms}")
+                saved += s; skipped += k
+                s, k = _log_save(capture_spin_webp(OUTPUT_DIR / base_spin, dry_run), base_spin,
+                                 f"spin prism 1/{total_prisms}")
                 saved += s; skipped += k
 
                 skin_entry: dict = {
                     "name": base_name_raw,
                     "file": base_file,
+                    "spin_file": base_spin,
                     "prisms": [],
                 }
 
@@ -388,29 +533,39 @@ def process_current_god(dry_run: bool = False):
                         click_at(*region_center(REGIONS["btn_prism_next"]),
                                  delay=DELAYS.get("after_prism_nav", 0.4))
                     recolor_raw = ocr(REGIONS["skin_name"]).strip()
-                    recolor_slug = make_id(god_name_raw + " " +recolor_raw)
-                    recolor_file = f"{recolor_slug}.png"
+                    recolor_slug = make_id(god_name_raw + " " + recolor_raw)
+                    recolor_file = f"{recolor_slug}.webp"
+                    recolor_spin = f"{recolor_slug}-spin.webp"
                     s, k = _log_save(save_image(OUTPUT_DIR / recolor_file, dry_run),
                                      recolor_file, f"prism {i}/{total_prisms}")
+                    saved += s; skipped += k
+                    s, k = _log_save(capture_spin_webp(OUTPUT_DIR / recolor_spin, dry_run),
+                                     recolor_spin, f"spin prism {i}/{total_prisms}")
                     saved += s; skipped += k
 
                     skin_entry["prisms"].append({
                         "name": recolor_raw,
                         "index": i - 1,   # 1-based among recolors
                         "file": recolor_file,
+                        "spin_file": recolor_spin,
                     })
 
                 god_skins.append(skin_entry)
 
             else:
-                slug = make_id(god_name_raw + " " +skin_name_raw)
-                filename = f"{slug}.png"
+                slug = make_id(god_name_raw + " " + skin_name_raw)
+                filename = f"{slug}.webp"
+                spin_file = f"{slug}-spin.webp"
                 s, k = _log_save(save_image(OUTPUT_DIR / filename, dry_run), filename)
+                saved += s; skipped += k
+                s, k = _log_save(capture_spin_webp(OUTPUT_DIR / spin_file, dry_run), spin_file,
+                                 "spin")
                 saved += s; skipped += k
 
                 god_skins.append({
                     "name": skin_name_raw,
                     "file": filename,
+                    "spin_file": spin_file,
                     "prisms": [],
                 })
 
@@ -423,6 +578,43 @@ def process_current_god(dry_run: bool = False):
 
     _update_manifest(god_name_raw, god_skins, dry_run)
     print(f"\nDone. saved={saved} skipped={skipped}")
+
+
+def process_all_gods(dry_run: bool = False):
+    """Iterate every god by repeatedly clicking btn_next_god, stopping when we
+    see a god name we've already processed (handles the wrap-around)."""
+    if not REGIONS.get("btn_next_god"):
+        print("btn_next_god not configured — processing current god only.")
+        process_current_god(dry_run=dry_run)
+        return
+
+    seen: set[str] = set()
+    god_number = 0
+
+    while True:
+        # OCR the current god name before processing
+        current_god = ocr(REGIONS["god_name"]).strip()
+        if not current_god:
+            current_god = "unknown"
+
+        if current_god in seen:
+            print(f"\nWrapped back to {current_god!r} — all gods processed.")
+            break
+
+        seen.add(current_god)
+        god_number += 1
+        print(f"\n{'='*60}")
+        print(f"God {god_number}: {current_god}")
+        print(f"{'='*60}")
+
+        process_current_god(dry_run=dry_run)
+
+        # Advance to the next god
+        print(f"\nAdvancing to next god...")
+        click_at(*region_center(REGIONS["btn_next_god"]),
+                 delay=DELAYS.get("after_god_select", 1.5))
+
+    print(f"\nAll done. Processed {len(seen)} god(s).")
 
 
 def focus_smite_window():
@@ -445,7 +637,11 @@ def focus_smite_window():
 if __name__ == "__main__":
     import sys
     dry_run = "--dry-run" in sys.argv
+    all_gods = "--all-gods" in sys.argv
     if dry_run:
         print("DRY RUN — no files will be written.\n")
     focus_smite_window()
-    process_current_god(dry_run=dry_run)
+    if all_gods:
+        process_all_gods(dry_run=dry_run)
+    else:
+        process_current_god(dry_run=dry_run)

@@ -4,6 +4,7 @@
 #   "pillow",
 #   "pywin32",
 #   "pyyaml",
+#   "pyautogui",
 # ]
 # ///
 
@@ -26,6 +27,7 @@ from pathlib import Path
 from PIL import Image, ImageTk, ImageDraw
 import yaml
 import time
+import pyautogui
 
 # ── win32 imports (optional; graceful fallback if game not running) ──────────
 try:
@@ -51,10 +53,14 @@ REGIONS_ORDER = [
     ("prism_counter",  "Prism counter — the 'X / Y' text between the ◄ ► arrows (bottom of skin panel)"),
     ("btn_prism_prev", "Prism ◄ button — left arrow to go to previous prism"),
     ("btn_prism_next", "Prism ► button — right arrow to go to next prism"),
+    # Point keys — single click to set, saved at top level of config (not inside regions)
+    ("mouse_park",  "Mouse park — click anywhere OUTSIDE the model view; cursor hides here during captures"),
 ]
 
 # Keys prefixed with _ are calibration helpers: not written to regions in config
 _HELPER_KEYS = {"_second_card"}
+# Point keys: single click (not drag), saved as [x, y] at top level of config
+_POINT_KEYS = {"mouse_park"}
 
 COLORS = ["#e74c3c", "#e67e22", "#f1c40f", "#2ecc71", "#1abc9c", "#3498db", "#9b59b6"]
 
@@ -142,17 +148,30 @@ class Calibrator:
         for i, (key, _) in enumerate(self.regions_order):
             if key in _HELPER_KEYS:
                 continue
-            region = self.results.get(key, [0, 0, 0, 0])
-            if region and any(v != 0 for v in region):
-                l, t, w, h = region
-                x1 = int(l * self.scale)
-                y1 = int(t * self.scale)
-                x2 = int((l + w) * self.scale)
-                y2 = int((t + h) * self.scale)
-                color = COLORS[i % len(COLORS)]
-                self.canvas.create_rectangle(x1, y1, x2, y2, outline=color, width=2, dash=(4, 2))
-                self.canvas.create_text(x1 + 4, y1 + 4, anchor="nw", text=key,
-                                        fill=color, font=("Segoe UI", 9, "bold"))
+            color = COLORS[i % len(COLORS)]
+            if key in _POINT_KEYS:
+                pt = self.results.get(key)
+                if pt and len(pt) == 2 and any(v != 0 for v in pt):
+                    px = int(pt[0] * self.scale)
+                    py = int(pt[1] * self.scale)
+                    r = 6
+                    self.canvas.create_oval(px - r, py - r, px + r, py + r,
+                                            outline=color, width=2, dash=(4, 2))
+                    self.canvas.create_line(px - r - 4, py, px + r + 4, py, fill=color, width=1)
+                    self.canvas.create_line(px, py - r - 4, px, py + r + 4, fill=color, width=1)
+                    self.canvas.create_text(px + r + 4, py, anchor="w", text=key,
+                                            fill=color, font=("Segoe UI", 9, "bold"))
+            else:
+                region = self.results.get(key, [0, 0, 0, 0])
+                if region and any(v != 0 for v in region):
+                    l, t, w, h = region
+                    x1 = int(l * self.scale)
+                    y1 = int(t * self.scale)
+                    x2 = int((l + w) * self.scale)
+                    y2 = int((t + h) * self.scale)
+                    self.canvas.create_rectangle(x1, y1, x2, y2, outline=color, width=2, dash=(4, 2))
+                    self.canvas.create_text(x1 + 4, y1 + 4, anchor="nw", text=key,
+                                            fill=color, font=("Segoe UI", 9, "bold"))
 
     def _update_prompt(self):
         if self.index >= len(self.regions_order):
@@ -160,8 +179,9 @@ class Calibrator:
             return
         key, label = self.regions_order[self.index]
         color = COLORS[self.index % len(COLORS)]
+        action = "Click" if key in _POINT_KEYS else "Draw"
         self.status_var.set(
-            f"[{self.index + 1}/{len(self.regions_order)}]  Draw: {label}  (key: {key})  "
+            f"[{self.index + 1}/{len(self.regions_order)}]  {action}: {label}  (key: {key})  "
             f"| Right-click to skip"
         )
         self.canvas.config(highlightbackground=color, highlightthickness=3)
@@ -173,6 +193,11 @@ class Calibrator:
         self.dragging = True
 
     def _on_drag(self, event):
+        if self.index >= len(self.regions_order):
+            return
+        key, _ = self.regions_order[self.index]
+        if key in _POINT_KEYS:
+            return  # no rubber-band for point keys
         if self.rect_id:
             self.canvas.delete(self.rect_id)
         color = COLORS[self.index % len(COLORS)]
@@ -185,24 +210,34 @@ class Calibrator:
         if not self.dragging or self.index >= len(self.regions_order):
             return
         self.dragging = False
-        x1 = min(self.start_x, event.x)
-        y1 = min(self.start_y, event.y)
-        x2 = max(self.start_x, event.x)
-        y2 = max(self.start_y, event.y)
-
-        # Convert back to real pixel coordinates
-        s = self.scale
-        real = [int(x1 / s), int(y1 / s), int((x2 - x1) / s), int((y2 - y1) / s)]
 
         key, _ = self.regions_order[self.index]
-        self.results[key] = real
-        print(f"  {key}: {real}")
-
-        # Lock in the drawn rect with a label
         color = COLORS[self.index % len(COLORS)]
-        self.canvas.create_rectangle(x1, y1, x2, y2, outline=color, width=2)
-        self.canvas.create_text(x1 + 4, y1 + 4, anchor="nw", text=key,
-                                fill=color, font=("Segoe UI", 9, "bold"))
+        s = self.scale
+
+        if key in _POINT_KEYS:
+            # Single-click point: use the press position
+            px, py = self.start_x, self.start_y
+            real = [int(px / s), int(py / s)]
+            self.results[key] = real
+            print(f"  {key}: {real}")
+            r = 6
+            self.canvas.create_oval(px - r, py - r, px + r, py + r, outline=color, width=2)
+            self.canvas.create_line(px - r - 4, py, px + r + 4, py, fill=color, width=1)
+            self.canvas.create_line(px, py - r - 4, px, py + r + 4, fill=color, width=1)
+            self.canvas.create_text(px + r + 4, py, anchor="w", text=key,
+                                    fill=color, font=("Segoe UI", 9, "bold"))
+        else:
+            x1 = min(self.start_x, event.x)
+            y1 = min(self.start_y, event.y)
+            x2 = max(self.start_x, event.x)
+            y2 = max(self.start_y, event.y)
+            real = [int(x1 / s), int(y1 / s), int((x2 - x1) / s), int((y2 - y1) / s)]
+            self.results[key] = real
+            print(f"  {key}: {real}")
+            self.canvas.create_rectangle(x1, y1, x2, y2, outline=color, width=2)
+            self.canvas.create_text(x1 + 4, y1 + 4, anchor="nw", text=key,
+                                    fill=color, font=("Segoe UI", 9, "bold"))
 
         self.index += 1
         self._update_prompt()
@@ -220,9 +255,129 @@ class Calibrator:
         return self.results
 
 
+# ── Spin calibration ──────────────────────────────────────────────────────────
+
+def _show_comparison(before: Image.Image, after: Image.Image, drag_px: int, duration: float):
+    """Show before/after model frames side by side in a blocking tkinter window."""
+    pad = 8
+    label_h = 28
+    thumb_w = min(before.width, 600)
+    scale = thumb_w / before.width
+    thumb_h = int(before.height * scale)
+
+    win_w = thumb_w * 2 + pad * 3
+    win_h = thumb_h + label_h + pad * 2
+
+    root = tk.Tk()
+    root.title(f"Spin test — drag_px={drag_px}  duration={duration:.1f}s")
+    root.resizable(False, False)
+    root.configure(bg="#1e1e1e")
+
+    b_img = ImageTk.PhotoImage(before.resize((thumb_w, thumb_h), Image.LANCZOS))
+    a_img = ImageTk.PhotoImage(after.resize((thumb_w, thumb_h), Image.LANCZOS))
+
+    tk.Label(root, text="BEFORE", fg="#aaaaaa", bg="#1e1e1e",
+             font=("Segoe UI", 10, "bold")).place(x=pad, y=pad)
+    tk.Label(root, text="AFTER (should match if 360°)", fg="#aaaaaa", bg="#1e1e1e",
+             font=("Segoe UI", 10, "bold")).place(x=thumb_w + pad * 2, y=pad)
+
+    tk.Label(root, image=b_img, bg="#1e1e1e").place(x=pad, y=label_h + pad)
+    tk.Label(root, image=a_img, bg="#1e1e1e").place(x=thumb_w + pad * 2, y=label_h + pad)
+
+    root.geometry(f"{win_w}x{win_h}")
+    root.mainloop()
+
+
+def calibrate_spin():
+    """Interactive spin calibration: drag the model, compare before/after, tune until 360°."""
+    cfg = load_config()
+    model_view = cfg.get("regions", {}).get("model_view")
+    if not model_view:
+        print("Error: model_view region not set. Run calibrate.py (without --spin) first.")
+        sys.exit(1)
+
+    l, t, w, h = model_view
+    cx = l + w // 2
+    cy = t + h // 2
+
+    drag_px  = cfg.get("spin_drag_px",    800)
+    duration = cfg.get("spin_duration_s", 3.0)
+
+    print("\nSpin calibration")
+    print("  Drags the model right, then checks if the pose matches the start (= 360°).")
+    print("  Adjust drag_px and duration until BEFORE and AFTER look the same.\n")
+    print(f"  model_view center: ({cx}, {cy})")
+
+    while True:
+        print(f"\n  Current: drag_px={drag_px}  duration={duration:.1f}s")
+        print("  Commands:  t=test   p=set drag_px   d=set duration   s=save & quit   q=quit")
+        cmd = input("  > ").strip().lower()
+
+        if cmd == "q":
+            break
+
+        elif cmd == "s":
+            cfg["spin_drag_px"]    = drag_px
+            cfg["spin_duration_s"] = duration
+            save_config(cfg)
+            print(f"  Saved: spin_drag_px={drag_px}  spin_duration_s={duration:.1f}s  → {CONFIG_PATH}")
+            break
+
+        elif cmd == "p":
+            try:
+                drag_px = int(input("  New drag_px: ").strip())
+            except ValueError:
+                print("  Invalid number.")
+
+        elif cmd == "d":
+            try:
+                duration = float(input("  New duration (seconds): ").strip())
+            except ValueError:
+                print("  Invalid number.")
+
+        elif cmd == "t":
+            print(f"  Focusing game in 2 seconds — don't touch the mouse...")
+            time.sleep(2)
+            focus_smite_window()
+            time.sleep(0.5)
+
+            from PIL import ImageGrab
+            park = cfg.get("mouse_park")
+            if park:
+                pyautogui.moveTo(park[0], park[1], duration=0.1)
+                time.sleep(0.1)
+            before = ImageGrab.grab(bbox=(l, t, l + w, t + h))
+
+            print(f"  Dragging {drag_px}px over {duration:.1f}s ...")
+            pyautogui.mouseDown(cx, cy, button="left")
+            pyautogui.moveRel(drag_px, 0, duration=duration)
+            pyautogui.mouseUp()
+            time.sleep(0.3)
+            if park:
+                pyautogui.moveTo(park[0], park[1], duration=0.1)
+                time.sleep(0.1)
+            after = ImageGrab.grab(bbox=(l, t, l + w, t + h))
+
+            # Drag back to restore start pose (important so repeated tests start from same position)
+            pyautogui.mouseDown(cx, cy, button="left")
+            pyautogui.moveRel(-drag_px, 0, duration=duration)
+            pyautogui.mouseUp()
+            time.sleep(0.3)
+
+            print("  Opening comparison window (close it to continue)...")
+            _show_comparison(before, after, drag_px, duration)
+
+        else:
+            print("  Unknown command.")
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
+    if "--spin" in sys.argv:
+        calibrate_spin()
+        sys.exit(0)
+
     print("Focusing Smite 2 window...")
     focus_smite_window()
 
@@ -231,14 +386,20 @@ if __name__ == "__main__":
     print(f"  Screen size: {screenshot.size}")
 
     cfg = load_config()
-    existing_regions = cfg.get("regions", {r: [0, 0, 0, 0] for r, _ in REGIONS_ORDER
-                                             if r not in _HELPER_KEYS})
+    # Seed existing values: region keys from cfg["regions"], point keys from cfg top level
+    existing = {r: [0, 0, 0, 0] for r, _ in REGIONS_ORDER
+                if r not in _HELPER_KEYS and r not in _POINT_KEYS}
+    existing.update(cfg.get("regions", {}))
+    for key in _POINT_KEYS:
+        if key in cfg:
+            existing[key] = cfg[key]
 
     print("\nOpening calibration window.")
-    print("  Left-drag  → define region")
+    print("  Left-drag   → define region")
+    print("  Left-click  → set point (for click-type entries)")
     print("  Right-click → skip (keep current value)\n")
 
-    calibrator = Calibrator(screenshot, REGIONS_ORDER, existing_regions)
+    calibrator = Calibrator(screenshot, REGIONS_ORDER, existing)
     raw = calibrator.run()
 
     # Compute gap from first_card and _second_card if both were drawn
@@ -254,8 +415,12 @@ if __name__ == "__main__":
     else:
         print("\nSkipped gap computation (first_card or _second_card not drawn).")
 
-    # Strip helper keys before saving regions
-    cfg["regions"] = {k: v for k, v in raw.items() if k not in _HELPER_KEYS}
+    # Region keys go into cfg["regions"]; point keys go at top level of cfg
+    cfg["regions"] = {k: v for k, v in raw.items()
+                      if k not in _HELPER_KEYS and k not in _POINT_KEYS}
+    for key in _POINT_KEYS:
+        if key in raw:
+            cfg[key] = raw[key]
 
     save_config(cfg)
     print(f"Saved to {CONFIG_PATH}")

@@ -2,71 +2,93 @@
 
 ## Phase 1: Setup & Foundations
 
-- [x] ~~Initialize Python project with `pyproject.toml` or `requirements.txt`~~ — using uv inline script deps instead
+- [x] Initialize Python project — using uv inline script deps (PEP 723)
 - [x] Verify pyautogui can detect and focus the Smite 2 game window on Windows — `find_window.py`
-- [x] Create a config file (`config.yaml` or similar) to store screen region coordinates, paths, delays, and other tunables
-- [x] Write a small utility to capture and save a full screenshot — done in Phase 0 (`check_deps.py`)
+- [x] Create `config.yaml` for screen region coordinates, delays, and tunables
+- [x] Write a small utility to capture and save a full screenshot — `check_deps.py`
 
 ## Phase 2: Region Calibration
 
-- [x] Manually identify and document the screen regions of interest (`calibrate.py`):
+- [x] Manually identify and document all screen regions of interest (`calibrate.py`):
     - God name text area
     - Skin name / details panel
-    - Model view (3D model display, changes on card click)
+    - Model view (3D model display)
     - Grid area + first card (card size + gap for grid math)
     - Next/prev god buttons
-- [x] Store all region coordinates in the config file with clear labels
-- [x] Write a calibration helper script that draws overlays (colored rectangles) on a screenshot so regions can be visually verified and adjusted — `calibrate.py`
+    - Scrollbar track
+    - Prism counter, prev/next prism buttons
+- [x] Store all regions in `config.yaml`
+- [x] Calibration helper script with colored overlay rectangles — `calibrate.py`
+- [x] `mouse_park` point calibration — single click (not drag) in main calibration UI; saved at top level of config; crosshair marker drawn
 
 ## Phase 3: UI Navigation
 
-- [ ] Write a function to click a screen coordinate with a configurable delay (to let the UI settle after each click)
-- [ ] Write a function to navigate to the god selection / loadout screen from the main menu
-- [ ] Write a function to cycle through all gods (detect end-of-list or iterate a known count)
-- [ ] Write a function to cycle through all skins for the currently selected god
-- [ ] Add waits/polling to confirm the UI has finished animating before proceeding (compare successive screenshots or wait a fixed delay)
+- [x] `click_at(x, y, delay)` with configurable post-click delay
+- [x] Cycle through all gods via `btn_next_god` (wraps; stop on first repeat in seen-set)
+- [x] Iterate all skin cards in the grid per god, scrolling as needed
+- [x] Scroll detection: name-comparison oracle (first card before/after scroll click)
+- [x] Scrollability detection: click row 1 vs row 3 top; name change = scrollable
+- [x] Cursor detection: hover card slot, check for hand cursor (IDC_HAND) to skip empty slots
+- [x] Prism navigation: `get_prism_info()` OCRs X/Y counter; `navigate_to_first_prism()` takes shortest direction (wrapping supported)
+- [x] Fresh-skin reset: click card 2 → card 1 before processing each god to force a model reload and prevent idle animation drift
+- [ ] **Revisit scroll logic** — grid has a known small number of rows (1–6); could use row-count-aware paging instead of generic scroll-until-no-change (e.g. detect row count once, compute exact scroll steps needed)
 
 ## Phase 4: Name Extraction (OCR)
 
-- [ ] Integrate pytesseract; write a function that crops a region and returns cleaned OCR text
-- [ ] Test OCR accuracy on the god name region and skin name region
-- [ ] Add post-processing to sanitize OCR output into valid filenames (strip special chars, normalize spaces, handle misreads)
-- [ ] Build a mapping/lookup for known god names to correct common OCR errors (optional fuzzy matching with rapidfuzz)
+- [x] pytesseract integration with upscale + Otsu threshold preprocessing (`--psm 7`)
+- [x] OCR of god name, skin name, prism counter regions
+- [x] `make_id()` slug: lowercase, strip non-alphanum, spaces→hyphens, collapse `--+`
+- [ ] OCR accuracy pass — TitanForged font may need Tesseract custom training or config tuning
+- [ ] Fuzzy matching / known-name correction for common misreads (optional, `rapidfuzz`)
 
 ## Phase 5: Screenshot Capture & Storage
 
-- [ ] Write a function to capture a specific screen region and return a Pillow image
-- [ ] Decide on output folder structure: e.g. `output/<GodName>/<SkinName>.png`
-- [ ] Write a function to save a captured image using the OCR-derived name, with collision handling (skip if exists, or overwrite with flag)
-- [ ] Add a dry-run mode that logs what would be saved without writing files
+- [x] Capture region → Pillow image (`ImageGrab.grab`)
+- [x] Output format: flat filenames `make_id(god + " " + skin).webp` in `output/`
+- [x] Save as lossy WebP (configurable quality, default 90) via Pillow
+- [x] Skip-if-exists (resume support)
+- [x] `--dry-run` mode
+- [x] `before_screenshot` delay (default 3.0s) so the 3D model fully loads before capture
+- [x] Global `output/manifest.json` — initialized with `{meta, gods:[]}` at run start; merged per-god, structured as `{gods: [{name, skins: [{name, file, spin_file, prisms: [{name, index, file, spin_file}]}]}]}`
 
 ## Phase 6: Main Automation Loop
 
-- [ ] Wire everything together: for each god → for each skin → OCR names → capture region → save file
-- [ ] Add progress logging (current god, skin, files written)
-- [ ] Add resume support: skip gods/skins whose output file already exists
-- [ ] Handle edge cases: default skin, locked skins, loading screens, unexpected popups
+- [x] Full loop: all gods → all skins → OCR → prisms → capture → save → manifest
+- [x] Progress logging (god name, skin name, save/skip status, scroll mode, prism index)
+- [x] `--all-gods` flag to iterate all gods; default processes only the current god
+- [ ] Handle edge cases: loading screens, unexpected popups, OCR returning empty string for a skin name
 
-## Phase 7: QA & Hardening
+## Phase 7: Animated Capture (WebP)
 
-- [ ] Run a full pass and manually review output images and filenames for accuracy
-- [ ] Fix any systematic OCR errors by tuning preprocessing (contrast, scale, binarization)
-- [ ] Add retry logic for navigation steps that sometimes fail silently
-- [ ] Write a validation script that checks output folder for missing gods/skins against a known list
+Smite 2 model viewer rotates on **click + drag** (horizontal drag = rotation). Speed affects rotation amount, so duration must be fixed during calibration.
 
-## Phase 8: Extensions (future)
+- [x] **Calibrate rotation drag distance** — `calibrate.py --spin` interactive loop: test drag, compare before/after frames side by side, adjust `drag_px` and `duration`, save to `config.yaml`.
+    - Calibrated values: `spin_drag_px: 372`, `spin_duration_s: 3.0`
+- [x] **`mouse_park` position** — cursor hides here during still frames and drag starts here (avoids model jump from moving to model center)
+- [x] **Implement `capture_spin_webp(dest)`**:
+    1. Park mouse; capture `spin_still_s` seconds of still frames (default 2.0s)
+    2. `mouseDown` at park position; start frame-capture thread
+    3. Single `moveRel(drag_px, 0, duration=spin_dur)` — drag is exactly `spin_dur` seconds; thread captures frames concurrently at `spin_fps` fps
+    4. Stop thread; `mouseUp`
+    5. Save all frames as animated WebP (`save_all=True`, `append_images`, `duration`, `loop=0`)
+    - Threading decouples drag timing from frame-capture overhead, so `spin_duration_s` matches calibration exactly
+- [x] **Frame rate** — `spin_fps: 15` (configurable); `ImageGrab` on a ~934×1344px region takes ~15–40ms, leaving headroom at 15fps (67ms/frame). Higher rates are possible but tight.
+- [x] **Resolution scaling** — `spin_scale: 0.33` (configurable); frames are resized with LANCZOS before saving to keep file sizes manageable
+- [x] **Output both static + animated** per skin:
+    - Static: `{slug}.webp` (taken with `before_screenshot` delay, model fully loaded)
+    - Animated: `{slug}-spin.webp`
+    - Manifest includes both `file` and `spin_file` fields for every skin and prism recolor
 
-- [ ] Capture additional regions per skin (e.g. card art, loading screen splash, in-game ability icons)
-- [ ] Scrape or maintain a manifest of all gods + skins with metadata (release date, rarity, set)
-- [ ] Upload images to the wiki automatically via wiki API (MediaWiki API or SMW)
-- [ ] Upload images to an image host or S3 bucket as an alternative
-- [ ] GUI or CLI with flags (`--god "Anubis"`, `--overwrite`, `--dry-run`)
-- [ ] Diff mode: detect newly added skins since last run and only capture those
-- [ ] **Animated capture** — record a short clip per skin instead of (or in addition to) a static screenshot:
-    - Option A: 5-second screen recording of the model view → animated WebP or GIF
-    - Option B: click-drag to rotate the model (front → side → back sweep), record ~2s → animated WebP
-    - Animated WebP preferred over GIF (smaller, supports transparency, wiki-compatible)
+## Phase 8: QA & Hardening
 
-## Before production run
+- [ ] Full production run — manually review output images and filenames
+- [ ] Fix systematic OCR errors (contrast, scale, binarization tuning)
+- [ ] Retry logic for navigation steps that fail silently
+- [ ] Validation script: check output folder against a known god/skin list for gaps
 
-- [ ] Increase `after_skin_select` in `config.yaml` from `0.5`s to `3.0`s so the 3D model has time to fully load before the screenshot is taken
+## Phase 9: Extensions (future)
+
+- [ ] Upload images to the wiki via MediaWiki API
+- [ ] Diff mode: detect newly added skins since last run, capture only those
+- [ ] Capture additional regions per skin (card art, loading screen splash, ability icons)
+- [ ] GUI or richer CLI (`--god "Anubis"`, `--overwrite`, etc.)
