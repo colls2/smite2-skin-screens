@@ -9,13 +9,13 @@
 
 ## Phase 2: Region Calibration
 
-- [ ] Manually identify and document the screen regions of interest:
+- [ ] Manually identify and document the screen regions of interest (run `calibrate.py` with game open):
     - God name text area
     - Skin name text area
     - Skin card/portrait area (the region to screenshot for the wiki)
     - Navigation buttons (next god, next skin, confirm, etc.)
-- [ ] Store all region coordinates in the config file with clear labels
-- [ ] Write a calibration helper script that draws overlays (colored rectangles) on a screenshot so regions can be visually verified and adjusted
+- [x] Store all region coordinates in the config file with clear labels
+- [x] Write a calibration helper script that draws overlays (colored rectangles) on a screenshot so regions can be visually verified and adjusted — `calibrate.py`
 
 ## Phase 3: UI Navigation
 
