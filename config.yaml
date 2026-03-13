@@ -1,7 +1,8 @@
 delays:
   after_click: 0.5
   after_god_select: 1.5
-  after_skin_select: 0.5  # increase to ~3s for production runs (see tasks.md)
+  after_skin_select: 0.5  # increase to ~3s for production runs (see plan.md)
+  after_prism_nav: 0.4
 grid:
   columns: 3
   gap_x: 13
@@ -48,5 +49,21 @@ regions:
   - 216
   - 532
   - 116
+  # Prism navigation — calibrate these with calibrate.py
+  prism_counter:
+  - 0
+  - 0
+  - 0
+  - 0
+  btn_prism_prev:
+  - 0
+  - 0
+  - 0
+  - 0
+  btn_prism_next:
+  - 0
+  - 0
+  - 0
+  - 0
 scroll_clicks_per_row: 14
 tesseract_path: C:\Program Files\Tesseract-OCR\tesseract.exe

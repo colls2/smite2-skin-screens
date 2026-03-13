@@ -47,6 +47,10 @@ REGIONS_ORDER = [
     ("first_card",     "First card in the grid (top-left) — used for card size"),
     # _second_card is a calibration-only helper: used to compute gap_x/gap_y, not saved
     ("_second_card", "Card immediately to the RIGHT of the first — used to compute card gap"),
+    # Prism navigation — only visible in the skin details panel when a skin has prism recolors
+    ("prism_counter",  "Prism counter — the 'X / Y' text between the ◄ ► arrows (bottom of skin panel)"),
+    ("btn_prism_prev", "Prism ◄ button — left arrow to go to previous prism"),
+    ("btn_prism_next", "Prism ► button — right arrow to go to next prism"),
 ]
 
 # Keys prefixed with _ are calibration helpers: not written to regions in config

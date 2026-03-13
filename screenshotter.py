@@ -21,6 +21,7 @@ click each one, OCR the skin name, and save the model view to:
     output/<GodName>/<SkinName>.png
 """
 
+import json
 import re
 import time
 from pathlib import Path
@@ -188,35 +189,80 @@ def scroll_grid_to_top():
 def scroll_grid_down() -> bool:
     """
     Click just below the scrollbar thumb to page-down.
-    Returns False if the grid didn't actually change (no scrollbar, or already at bottom).
+    Returns False if the grid didn't scroll (no real scrollbar, or already at bottom).
+
+    Uses thumb-position comparison rather than grid-image comparison because the
+    animated 3D model background causes the grid_area image to change between frames
+    even when no scroll occurs, making image-diff checks unreliable.
     """
-    bounds = find_thumb_bounds()
-    if bounds is None:
+    before_bounds = find_thumb_bounds()
+    if before_bounds is None:
         return False
 
-    thumb_top, thumb_bottom = bounds
+    thumb_top, thumb_bottom = before_bounds
     l, t, w, h = REGIONS["scrollbar_track"]
     track_bottom = t + h
 
     if thumb_bottom >= track_bottom - 8:
         return False   # thumb already at the bottom
 
-    before = capture(REGIONS["grid_area"])
-
     # Click just below the thumb — standard Windows scrollbar "page down"
     cx = l + w // 2
     pyautogui.click(cx, thumb_bottom + 8)
     time.sleep(0.4)
 
-    # Confirm the grid actually changed — guards against false thumb detections
-    after = capture(REGIONS["grid_area"])
-    if images_equal(before, after):
-        return False  # panel border / decorative frame was mistaken for the thumb
+    after_bounds = find_thumb_bounds()
+    if after_bounds is None:
+        return False
+
+    # If the thumb didn't move, the "thumb" was a static UI element
+    # (e.g., the decorative panel border) — not a real scrollbar thumb
+    if abs(after_bounds[0] - before_bounds[0]) < 3:
+        return False
 
     return True
 
 
+# ── Prism helpers ─────────────────────────────────────────────────────────────
+
+def get_prism_info() -> tuple[int, int]:
+    """
+    OCR the prism counter region.
+    Returns (current_index, total), e.g. "4/5" → (4, 5).
+    Returns (0, 0) if the region is unconfigured or pattern not found.
+    """
+    if not REGIONS.get("prism_counter"):
+        return 0, 0
+    text = ocr(REGIONS["prism_counter"])
+    m = re.search(r'(\d+)\s*/\s*(\d+)', text)
+    if m:
+        return int(m.group(1)), int(m.group(2))
+    return 0, 0
+
+
+def navigate_to_first_prism():
+    """Click ◄ until the prism counter shows 1/N."""
+    if not REGIONS.get("btn_prism_prev"):
+        return
+    for _ in range(30):  # safety limit
+        cur, _total = get_prism_info()
+        if cur <= 1:
+            break
+        click_at(*region_center(REGIONS["btn_prism_prev"]), delay=DELAYS.get("after_prism_nav", 0.4))
+
+
 # ── Main flow ─────────────────────────────────────────────────────────────────
+
+def save_image(dest: Path, dry_run: bool) -> str:
+    """Capture model_view and save to dest. Returns 'saved', 'skipped', or 'dry'."""
+    if dest.exists():
+        return "skipped"
+    if dry_run:
+        return "dry"
+    dest.parent.mkdir(parents=True, exist_ok=True)
+    capture(REGIONS["model_view"]).save(dest)
+    return "saved"
+
 
 def process_current_god(dry_run: bool = False):
     card_centers = visible_card_centers()
@@ -230,6 +276,8 @@ def process_current_god(dry_run: bool = False):
     saved = 0
     skipped = 0
     page = 0
+    god_name = "unknown"
+    manifest: list[dict] = []
 
     while True:
         for cx, cy in card_centers:
@@ -238,32 +286,98 @@ def process_current_god(dry_run: bool = False):
             god_name  = sanitize_filename(ocr(REGIONS["god_name"]))
             skin_name = sanitize_filename(ocr(REGIONS["skin_name"]))
 
-            dest = OUTPUT_DIR / god_name / f"{skin_name}.png"
+            cur_prism, total_prisms = get_prism_info()
 
-            if dest.exists():
-                print(f"  skip  {god_name}/{skin_name}.png (already exists)")
-                skipped += 1
-                continue
+            if total_prisms > 0:
+                # Card has prism variants. Prism 1/N is the base skin; 2..N are recolors.
+                skin_entry: dict = {"prisms": []}
+                navigate_to_first_prism()
 
-            if dry_run:
-                print(f"  [dry] would save → {dest}")
-                saved += 1
-                continue
+                for i in range(1, total_prisms + 1):
+                    prism_name_raw = ocr(REGIONS["skin_name"])
+                    prism_name = sanitize_filename(prism_name_raw)
+                    dest = OUTPUT_DIR / god_name / f"{prism_name}.png"
+                    status = save_image(dest, dry_run)
 
-            dest.parent.mkdir(parents=True, exist_ok=True)
-            model_img = capture(REGIONS["model_view"])
-            model_img.save(dest)
-            print(f"  saved {dest}")
-            saved += 1
+                    label = f"{god_name}/{prism_name}.png (prism {i}/{total_prisms})"
+                    if status == "skipped":
+                        print(f"  skip  {label} (already exists)")
+                        skipped += 1
+                    elif status == "dry":
+                        print(f"  [dry] would save → {label}")
+                        saved += 1
+                    else:
+                        print(f"  saved {label}")
+                        saved += 1
 
-        # Scroll down — returns False if no scrollbar, already at bottom,
-        # or the click didn't actually change the grid (false thumb detection)
+                    skin_entry["prisms"].append({
+                        "name": prism_name_raw.strip(),
+                        "index": i,
+                        "file": f"{god_name}/{prism_name}.png",
+                    })
+
+                    if i == 1:
+                        # Record base skin fields from first prism
+                        skin_entry["name"] = prism_name_raw.strip()
+                        skin_entry["file"] = f"{god_name}/{prism_name}.png"
+                        skin_entry["is_prism_skin"] = True
+
+                    if i < total_prisms and REGIONS.get("btn_prism_next"):
+                        click_at(*region_center(REGIONS["btn_prism_next"]),
+                                 delay=DELAYS.get("after_prism_nav", 0.4))
+
+                manifest.append(skin_entry)
+
+            else:
+                # No prisms — single capture.
+                dest = OUTPUT_DIR / god_name / f"{skin_name}.png"
+                status = save_image(dest, dry_run)
+
+                label = f"{god_name}/{skin_name}.png"
+                if status == "skipped":
+                    print(f"  skip  {label} (already exists)")
+                    skipped += 1
+                elif status == "dry":
+                    print(f"  [dry] would save → {label}")
+                    saved += 1
+                else:
+                    print(f"  saved {label}")
+                    saved += 1
+
+                manifest.append({
+                    "name": skin_name,
+                    "file": f"{god_name}/{skin_name}.png",
+                    "is_prism_skin": False,
+                    "prisms": [],
+                })
+
         if not scroll_grid_down():
             print("\nReached end of skin grid.")
             break
 
         page += 1
         print(f"  --- scrolled to page {page + 1} ---")
+
+    # Save per-god manifest
+    if manifest:
+        god_dir = OUTPUT_DIR / god_name
+        god_dir.mkdir(parents=True, exist_ok=True)
+        manifest_path = god_dir / "skins.json"
+        existing: list = []
+        if manifest_path.exists():
+            try:
+                existing = json.loads(manifest_path.read_text(encoding="utf-8"))
+            except Exception:
+                pass
+        # Merge: update existing entries by name, append new ones
+        by_name = {e["name"]: e for e in existing}
+        for entry in manifest:
+            by_name[entry["name"]] = entry
+        manifest_path.write_text(
+            json.dumps(list(by_name.values()), indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
+        print(f"Manifest saved → {manifest_path}")
 
     print(f"\nDone. saved={saved} skipped={skipped}")
 
