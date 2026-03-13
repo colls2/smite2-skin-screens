@@ -265,14 +265,21 @@ def get_prism_info() -> tuple[int, int]:
 
 
 def navigate_to_first_prism():
-    """Click ◄ until the prism counter shows 1/N."""
-    if not REGIONS.get("btn_prism_prev"):
+    """Navigate to prism 1/N using whichever direction requires fewer clicks.
+    Assumes the prism selector wraps: pressing ► at N/N goes to 1/N."""
+    cur, total = get_prism_info()
+    if cur <= 1 or total == 0:
         return
-    for _ in range(30):  # safety limit
-        cur, _total = get_prism_info()
-        if cur <= 1:
-            break
-        click_at(*region_center(REGIONS["btn_prism_prev"]), delay=DELAYS.get("after_prism_nav", 0.4))
+    backward_steps = cur - 1          # ◄ clicks to reach 1
+    forward_steps  = total - cur + 1  # ► clicks to wrap through N back to 1
+    if backward_steps <= forward_steps:
+        btn, steps = REGIONS.get("btn_prism_prev"), backward_steps
+    else:
+        btn, steps = REGIONS.get("btn_prism_next"), forward_steps
+    if not btn:
+        return
+    for _ in range(steps):
+        click_at(*region_center(btn), delay=DELAYS.get("after_prism_nav", 0.4))
 
 
 # ── Main flow ─────────────────────────────────────────────────────────────────
