@@ -112,6 +112,7 @@ def make_id(name: str) -> str:
     name = name.lower()
     name = re.sub(r"[^a-z0-9\s-]", "", name)
     name = re.sub(r"\s+", "-", name)
+    name = re.sub(r"-{2,}", "-", name)   # collapse consecutive dashes (e.g. from " - ")
     return name.strip("-") or "unknown"
 
 
@@ -153,11 +154,6 @@ def find_thumb_bounds() -> tuple[int, int] | None:
     thumb_rows = np.where(row_brightness > threshold)[0]
 
     if len(thumb_rows) == 0:
-        return None
-
-    # A real thumb occupies only a fraction of the track.
-    # If >60% of rows are "bright", this is card art bleeding into the region — no scrollbar.
-    if len(thumb_rows) > len(row_brightness) * 0.6:
         return None
 
     return int(thumb_rows[0]) + t, int(thumb_rows[-1]) + t
@@ -328,7 +324,7 @@ def process_current_god(dry_run: bool = False):
                 navigate_to_first_prism()
 
                 base_name_raw = ocr(REGIONS["skin_name"]).strip()
-                base_slug = make_id(god_name_raw + " - " + base_name_raw)
+                base_slug = make_id(god_name_raw + " " +base_name_raw)
                 base_file = f"{base_slug}.png"
                 s, k = _log_save(save_image(OUTPUT_DIR / base_file, dry_run), base_file,
                                  f"prism 1/{total_prisms}")
@@ -345,7 +341,7 @@ def process_current_god(dry_run: bool = False):
                         click_at(*region_center(REGIONS["btn_prism_next"]),
                                  delay=DELAYS.get("after_prism_nav", 0.4))
                     recolor_raw = ocr(REGIONS["skin_name"]).strip()
-                    recolor_slug = make_id(god_name_raw + " - " + recolor_raw)
+                    recolor_slug = make_id(god_name_raw + " " +recolor_raw)
                     recolor_file = f"{recolor_slug}.png"
                     s, k = _log_save(save_image(OUTPUT_DIR / recolor_file, dry_run),
                                      recolor_file, f"prism {i}/{total_prisms}")
@@ -360,7 +356,7 @@ def process_current_god(dry_run: bool = False):
                 god_skins.append(skin_entry)
 
             else:
-                slug = make_id(god_name_raw + " - " + skin_name_raw)
+                slug = make_id(god_name_raw + " " +skin_name_raw)
                 filename = f"{slug}.png"
                 s, k = _log_save(save_image(OUTPUT_DIR / filename, dry_run), filename)
                 saved += s; skipped += k
