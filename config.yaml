@@ -1,7 +1,7 @@
 delays:
   after_click: 0.5
   after_god_select: 1.5
-  after_skin_select: 3.0  # time for model to fully load after clicking a skin card
+  after_skin_select: 0.5  # increase to ~3s for production runs (see tasks.md)
 grid:
   columns: 3
   gap_x: 13

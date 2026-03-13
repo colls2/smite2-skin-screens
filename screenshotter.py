@@ -166,11 +166,10 @@ def find_thumb_bounds() -> tuple[int, int] | None:
 
 
 def scroll_grid_to_top():
-    """Drag the scrollbar thumb to the top of the track."""
+    """Drag the scrollbar thumb to the top of the track. No-op if no scrollbar."""
     bounds = find_thumb_bounds()
     if bounds is None:
-        print("  Warning: could not detect scrollbar thumb for scroll-to-top.")
-        return
+        return  # no scrollbar — grid fits on one page, nothing to scroll
     thumb_top, thumb_bottom = bounds
     l, t, w, h = REGIONS["scrollbar_track"]
     cx = l + w // 2
@@ -187,8 +186,7 @@ def scroll_grid_down() -> bool:
     """
     bounds = find_thumb_bounds()
     if bounds is None:
-        print("  Warning: could not detect scrollbar thumb.")
-        return False
+        return False  # no scrollbar — grid fits on one page, already done
 
     thumb_top, thumb_bottom = bounds
     l, t, w, h = REGIONS["scrollbar_track"]
