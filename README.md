@@ -100,7 +100,7 @@ You will be prompted to define these regions in order:
 | `btn_prism_next` | The ► (next prism) button |
 | `mouse_park` | A **single click** anywhere outside the model view — the cursor hides here during captures to avoid UI hover effects |
 
-All results are saved to `config.yaml` automatically when you close the window.
+All results are saved to `config.yaml` automatically when you close the window. For `btn_prism_prev` and `btn_prism_next`, a grayscale template image (`btn_prism_prev_template.png` / `btn_prism_next_template.png`) is also saved alongside `config.yaml`. At runtime the tool uses template matching to find the exact button position each time it needs to click, so minor UI drift (the prism buttons shift up or down slightly depending on the skin) is handled automatically without recalibration.
 
 **Tips:**
 - Draw regions slightly tight rather than loose — OCR accuracy improves when the text region is clean
@@ -256,6 +256,8 @@ Key values in `config.yaml`:
 | `spin_fps` | `15` | Frame rate for animated WebP capture |
 | `spin_scale` | `0.33` | Scale factor for animated WebP frames (reduces file size) |
 | `webp_quality` | `90` | WebP lossy quality for both static and animated output |
+| `template_search_margin` | `60` | Pixels to expand the search area around a button's calibrated position when template matching |
+| `template_match_threshold` | `0.7` | Minimum match confidence (0–1) — below this the calibrated center is used as fallback |
 
 ---
 
