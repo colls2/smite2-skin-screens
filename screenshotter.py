@@ -519,6 +519,13 @@ def process_current_god(dry_run: bool = False, no_spin: bool = False):
             god_name_raw = ocr(REGIONS["god_name"]).strip()
             skin_name_raw = ocr(REGIONS["skin_name"]).strip()
 
+            if not god_name_raw:
+                print(f"  warn  OCR returned empty god name at ({cx},{cy}) — skipping skin")
+                continue
+            if not skin_name_raw:
+                print(f"  warn  OCR returned empty skin name at ({cx},{cy}) — skipping skin")
+                continue
+
             _cur, total_prisms = get_prism_info()
 
             # Track files written for this skin. On Ctrl+C we delete them so
@@ -531,6 +538,9 @@ def process_current_god(dry_run: bool = False, no_spin: bool = False):
                     navigate_to_first_prism()
 
                     base_name_raw = ocr(REGIONS["skin_name"]).strip()
+                    if not base_name_raw:
+                        print(f"  warn  OCR returned empty prism base name at ({cx},{cy}) — skipping skin")
+                        continue
                     base_slug = make_id(god_name_raw + " " + base_name_raw)
                     base_file = f"{base_slug}.webp"
                     base_spin = f"{base_slug}-spin.webp"
@@ -557,6 +567,9 @@ def process_current_god(dry_run: bool = False, no_spin: bool = False):
                             click_at(*region_center(REGIONS["btn_prism_next"]),
                                      delay=DELAYS.get("after_prism_nav", 0.4))
                         recolor_raw = ocr(REGIONS["skin_name"]).strip()
+                        if not recolor_raw:
+                            print(f"  warn  OCR returned empty recolor name (prism {i}/{total_prisms}) — skipping recolor")
+                            continue
                         recolor_slug = make_id(god_name_raw + " " + recolor_raw)
                         recolor_file = f"{recolor_slug}.webp"
                         recolor_spin = f"{recolor_slug}-spin.webp"
