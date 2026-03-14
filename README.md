@@ -140,6 +140,15 @@ uv run screenshotter.py --all-gods
 
 The tool will navigate through the full god roster automatically, processing each one.
 
+### Screenshots only (no spin animations)
+
+```bash
+uv run screenshotter.py --no-spin
+uv run screenshotter.py --all-gods --no-spin
+```
+
+Skips the animated WebP captures entirely. Static screenshots are saved as normal. `spin_file` is omitted from manifest entries for skins captured in this mode.
+
 ### Dry run (no files written)
 
 ```bash

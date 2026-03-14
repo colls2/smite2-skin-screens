@@ -475,7 +475,7 @@ def _update_manifest(god_name_raw: str, skins: list[dict], dry_run: bool):
         print(f"Manifest → {manifest_path}")
 
 
-def process_current_god(dry_run: bool = False):
+def process_current_god(dry_run: bool = False, no_spin: bool = False):
     _init_manifest(dry_run)
     run_start = time.monotonic()
 
@@ -534,18 +534,21 @@ def process_current_god(dry_run: bool = False):
                     base_slug = make_id(god_name_raw + " " + base_name_raw)
                     base_file = f"{base_slug}.webp"
                     base_spin = f"{base_slug}-spin.webp"
-                    _skin_files += [OUTPUT_DIR / base_file, OUTPUT_DIR / base_spin]
+                    _skin_files.append(OUTPUT_DIR / base_file)
+                    if not no_spin:
+                        _skin_files.append(OUTPUT_DIR / base_spin)
                     s, k = _log_save(save_image(OUTPUT_DIR / base_file, dry_run), base_file,
                                      f"prism 1/{total_prisms}")
                     saved += s; skipped += k
-                    s, k = _log_save(capture_spin_webp(OUTPUT_DIR / base_spin, dry_run), base_spin,
-                                     f"spin prism 1/{total_prisms}")
-                    saved += s; skipped += k
+                    if not no_spin:
+                        s, k = _log_save(capture_spin_webp(OUTPUT_DIR / base_spin, dry_run), base_spin,
+                                         f"spin prism 1/{total_prisms}")
+                        saved += s; skipped += k
 
                     skin_entry: dict = {
                         "name": base_name_raw,
                         "file": base_file,
-                        "spin_file": base_spin,
+                        **({} if no_spin else {"spin_file": base_spin}),
                         "prisms": {},
                     }
 
@@ -557,19 +560,22 @@ def process_current_god(dry_run: bool = False):
                         recolor_slug = make_id(god_name_raw + " " + recolor_raw)
                         recolor_file = f"{recolor_slug}.webp"
                         recolor_spin = f"{recolor_slug}-spin.webp"
-                        _skin_files += [OUTPUT_DIR / recolor_file, OUTPUT_DIR / recolor_spin]
+                        _skin_files.append(OUTPUT_DIR / recolor_file)
+                        if not no_spin:
+                            _skin_files.append(OUTPUT_DIR / recolor_spin)
                         s, k = _log_save(save_image(OUTPUT_DIR / recolor_file, dry_run),
                                          recolor_file, f"prism {i}/{total_prisms}")
                         saved += s; skipped += k
-                        s, k = _log_save(capture_spin_webp(OUTPUT_DIR / recolor_spin, dry_run),
-                                         recolor_spin, f"spin prism {i}/{total_prisms}")
-                        saved += s; skipped += k
+                        if not no_spin:
+                            s, k = _log_save(capture_spin_webp(OUTPUT_DIR / recolor_spin, dry_run),
+                                             recolor_spin, f"spin prism {i}/{total_prisms}")
+                            saved += s; skipped += k
 
                         skin_entry["prisms"][recolor_slug] = {
                             "name": recolor_raw,
                             "index": i - 1,   # 1-based among recolors
                             "file": recolor_file,
-                            "spin_file": recolor_spin,
+                            **({} if no_spin else {"spin_file": recolor_spin}),
                         }
 
                     god_skins.append(skin_entry)
@@ -578,17 +584,20 @@ def process_current_god(dry_run: bool = False):
                     slug = make_id(god_name_raw + " " + skin_name_raw)
                     filename = f"{slug}.webp"
                     spin_file = f"{slug}-spin.webp"
-                    _skin_files += [OUTPUT_DIR / filename, OUTPUT_DIR / spin_file]
+                    _skin_files.append(OUTPUT_DIR / filename)
+                    if not no_spin:
+                        _skin_files.append(OUTPUT_DIR / spin_file)
                     s, k = _log_save(save_image(OUTPUT_DIR / filename, dry_run), filename)
                     saved += s; skipped += k
-                    s, k = _log_save(capture_spin_webp(OUTPUT_DIR / spin_file, dry_run), spin_file,
-                                     "spin")
-                    saved += s; skipped += k
+                    if not no_spin:
+                        s, k = _log_save(capture_spin_webp(OUTPUT_DIR / spin_file, dry_run), spin_file,
+                                         "spin")
+                        saved += s; skipped += k
 
                     god_skins.append({
                         "name": skin_name_raw,
                         "file": filename,
-                        "spin_file": spin_file,
+                        **({} if no_spin else {"spin_file": spin_file}),
                         "prisms": {},
                     })
 
@@ -612,12 +621,12 @@ def process_current_god(dry_run: bool = False):
     print(f"\nDone. saved={saved} skipped={skipped}  ({_fmt_elapsed(elapsed)})")
 
 
-def process_all_gods(dry_run: bool = False):
+def process_all_gods(dry_run: bool = False, no_spin: bool = False):
     """Iterate every god by repeatedly clicking btn_next_god, stopping when we
     see a god name we've already processed (handles the wrap-around)."""
     if not REGIONS.get("btn_next_god"):
         print("btn_next_god not configured — processing current god only.")
-        process_current_god(dry_run=dry_run)
+        process_current_god(dry_run=dry_run, no_spin=no_spin)
         return
 
     start_god: str | None = None
@@ -640,7 +649,7 @@ def process_all_gods(dry_run: bool = False):
         print(f"{'='*60}")
 
         god_start = time.monotonic()
-        process_current_god(dry_run=dry_run)
+        process_current_god(dry_run=dry_run, no_spin=no_spin)
         print(f"  → {current_god} finished in {_fmt_elapsed(time.monotonic() - god_start)}")
 
         # Advance to the next god
@@ -673,14 +682,17 @@ if __name__ == "__main__":
     import sys
     dry_run = "--dry-run" in sys.argv
     all_gods = "--all-gods" in sys.argv
+    no_spin  = "--no-spin"  in sys.argv
     if dry_run:
         print("DRY RUN — no files will be written.\n")
+    if no_spin:
+        print("NO SPIN — animated WebPs will be skipped.\n")
     focus_smite_window()
     try:
         if all_gods:
-            process_all_gods(dry_run=dry_run)
+            process_all_gods(dry_run=dry_run, no_spin=no_spin)
         else:
-            process_current_god(dry_run=dry_run)
+            process_current_god(dry_run=dry_run, no_spin=no_spin)
     except KeyboardInterrupt:
         print("\nStopped.")
         sys.exit(0)
