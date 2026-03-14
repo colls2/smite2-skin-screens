@@ -6,10 +6,10 @@ The tool navigates the in-game cosmetics UI, reads god and skin names via OCR, c
 
 <table>
 <tr>
-<td align="center"><img src="aladdin-onyx.webp" width="200"/><br/><sub>aladdin-onyx.webp</sub></td>
-<td align="center"><img src="aladdin-onyx-spin.webp" width="200"/><br/><sub>aladdin-onyx-spin.webp</sub></td>
-<td align="center"><img src="aphrodite-yule-cheer-winterberry.webp" width="200"/><br/><sub>aphrodite-yule-cheer-winterberry.webp</sub></td>
-<td align="center"><img src="aphrodite-yule-cheer-winterberry-spin.webp" width="200"/><br/><sub>aphrodite-yule-cheer-winterberry-spin.webp</sub></td>
+<td align="center"><img src="aladdin-onyx.webp" height="280"/><br/><sub>aladdin-onyx.webp</sub></td>
+<td align="center"><img src="aladdin-onyx-spin.webp" height="280"/><br/><sub>aladdin-onyx-spin.webp</sub></td>
+<td align="center"><img src="aphrodite-yule-cheer-winterberry.webp" height="280"/><br/><sub>aphrodite-yule-cheer-winterberry.webp</sub></td>
+<td align="center"><img src="aphrodite-yule-cheer-winterberry-spin.webp" height="280"/><br/><sub>aphrodite-yule-cheer-winterberry-spin.webp</sub></td>
 </tr>
 </table>
 
