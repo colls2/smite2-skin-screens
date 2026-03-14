@@ -471,3 +471,14 @@ if __name__ == "__main__":
 
     save_config(cfg)
     print(f"Saved to {CONFIG_PATH}")
+
+    # Save grayscale template crops for buttons that benefit from template matching
+    _TEMPLATE_BUTTON_KEYS = {"btn_prism_prev", "btn_prism_next"}
+    for key in _TEMPLATE_BUTTON_KEYS:
+        region = raw.get(key, [0, 0, 0, 0])
+        if region and any(v != 0 for v in region):
+            l, t, w, h = region
+            crop = screenshot.crop((l, t, l + w, t + h)).convert("L")
+            tmpl_path = CONFIG_PATH.parent / f"{key}_template.png"
+            crop.save(str(tmpl_path))
+            print(f"  saved template: {tmpl_path.name}")

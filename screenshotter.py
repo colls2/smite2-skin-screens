@@ -273,6 +273,51 @@ def scroll_grid_down() -> bool:
     return scrolled
 
 
+# ── Template-matching button finder ───────────────────────────────────────────
+
+_template_cache: dict[str, np.ndarray | None] = {}
+
+def _load_template(key: str) -> np.ndarray | None:
+    if key not in _template_cache:
+        path = CONFIG_PATH.parent / f"{key}_template.png"
+        _template_cache[key] = cv2.imread(str(path), cv2.IMREAD_GRAYSCALE) if path.exists() else None
+    return _template_cache[key]
+
+
+def _find_button(key: str) -> tuple[int, int]:
+    """Locate a button via template matching; falls back to calibrated region center.
+
+    Searches within the calibrated region expanded by template_search_margin pixels
+    in every direction, so small UI shifts (e.g. prism buttons drifting up/down)
+    are handled automatically.
+    """
+    region = REGIONS.get(key)
+    if not region:
+        raise KeyError(f"Region {key!r} not configured")
+    template = _load_template(key)
+    if template is None:
+        return region_center(region)
+
+    margin    = CFG.get("template_search_margin",   60)
+    threshold = CFG.get("template_match_threshold", 0.7)
+    l, t, w, h = region
+    sl, st = max(0, l - margin), max(0, t - margin)
+    sw, sh = w + 2 * margin, h + 2 * margin
+
+    search_img = np.array(capture([sl, st, sw, sh]).convert("L"))
+    result = cv2.matchTemplate(search_img, template, cv2.TM_CCOEFF_NORMED)
+    _, max_val, _, max_loc = cv2.minMaxLoc(result)
+
+    if max_val < threshold:
+        print(f"  warn  template match {key!r} confidence {max_val:.2f} < {threshold} — using calibrated center")
+        return region_center(region)
+
+    th, tw = template.shape[:2]
+    cx = sl + max_loc[0] + tw // 2
+    cy = st + max_loc[1] + th // 2
+    return cx, cy
+
+
 # ── Prism helpers ─────────────────────────────────────────────────────────────
 
 def get_prism_info() -> tuple[int, int]:
@@ -299,13 +344,13 @@ def navigate_to_first_prism():
     backward_steps = cur - 1          # ◄ clicks to reach 1
     forward_steps  = total - cur + 1  # ► clicks to wrap through N back to 1
     if backward_steps <= forward_steps:
-        btn, steps = REGIONS.get("btn_prism_prev"), backward_steps
+        btn_key, steps = "btn_prism_prev", backward_steps
     else:
-        btn, steps = REGIONS.get("btn_prism_next"), forward_steps
-    if not btn:
+        btn_key, steps = "btn_prism_next", forward_steps
+    if not REGIONS.get(btn_key):
         return
     for _ in range(steps):
-        click_at(*region_center(btn), delay=DELAYS.get("after_prism_nav", 0.4))
+        click_at(*_find_button(btn_key), delay=DELAYS.get("after_prism_nav", 0.4))
 
 
 # ── Main flow ─────────────────────────────────────────────────────────────────
@@ -564,7 +609,7 @@ def process_current_god(dry_run: bool = False, no_spin: bool = False):
 
                     for i in range(2, total_prisms + 1):
                         if REGIONS.get("btn_prism_next"):
-                            click_at(*region_center(REGIONS["btn_prism_next"]),
+                            click_at(*_find_button("btn_prism_next"),
                                      delay=DELAYS.get("after_prism_nav", 0.4))
                         recolor_raw = ocr(REGIONS["skin_name"]).strip()
                         if not recolor_raw:
