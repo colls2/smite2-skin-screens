@@ -4,6 +4,15 @@ Automates capturing skin screenshots and animated previews from Smite 2 for use 
 
 The tool navigates the in-game cosmetics UI, reads god and skin names via OCR, captures the 3D model view as a static WebP and as an animated spin WebP, and writes everything to an `output/` folder with a structured `manifest.json`.
 
+<table>
+<tr>
+<td align="center"><img src="aladdin-onyx.webp" width="200"/><br/><sub>aladdin-onyx.webp</sub></td>
+<td align="center"><img src="aladdin-onyx-spin.webp" width="200"/><br/><sub>aladdin-onyx-spin.webp</sub></td>
+<td align="center"><img src="aphrodite-yule-cheer-winterberry.webp" width="200"/><br/><sub>aphrodite-yule-cheer-winterberry.webp</sub></td>
+<td align="center"><img src="aphrodite-yule-cheer-winterberry-spin.webp" width="200"/><br/><sub>aphrodite-yule-cheer-winterberry-spin.webp</sub></td>
+</tr>
+</table>
+
 ---
 
 ## Requirements
