@@ -661,38 +661,54 @@ def process_all_gods(dry_run: bool = False, no_spin: bool = False):
     print(f"\nAll done. Processed {god_number} god(s) in {total}.")
 
 
-def focus_smite_window():
+def focus_smite_window() -> bool:
+    """Focus the Smite 2 window. Returns True on success or if pywin32 unavailable, False if not found."""
     if not HAS_WIN32:
-        print("Warning: pywin32 not available, cannot focus game window.")
-        return
+        print("Warning: pywin32 not available, cannot verify game window.")
+        return True
     results = []
     def cb(hwnd, _):
         if win32gui.IsWindowVisible(hwnd) and "smite 2" in win32gui.GetWindowText(hwnd).lower():
             results.append(hwnd)
     win32gui.EnumWindows(cb, None)
     if not results:
-        print("Warning: Smite 2 window not found. Is the game running?")
-        return
+        print("Error: Smite 2 window not found. Launch the game and try again.")
+        return False
     win32gui.ShowWindow(results[0], win32con.SW_RESTORE)
     win32gui.SetForegroundWindow(results[0])
     time.sleep(0.5)  # let the window come to front before any input
+    return True
 
 
 if __name__ == "__main__":
     import sys
-    dry_run = "--dry-run" in sys.argv
-    all_gods = "--all-gods" in sys.argv
-    no_spin  = "--no-spin"  in sys.argv
-    if dry_run:
+    import argparse
+    p = argparse.ArgumentParser(
+        description="Capture skin screenshots and animations from Smite 2.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Navigate to a god's skin screen in-game before running.",
+    )
+    p.add_argument("--all-gods", action="store_true",
+                   help="Iterate the full god roster automatically")
+    p.add_argument("--no-spin",  action="store_true",
+                   help="Skip animated WebP captures (static screenshots only)")
+    p.add_argument("--dry-run",  action="store_true",
+                   help="Print what would be saved without writing any files")
+    args = p.parse_args()
+
+    if args.dry_run:
         print("DRY RUN — no files will be written.\n")
-    if no_spin:
+    if args.no_spin:
         print("NO SPIN — animated WebPs will be skipped.\n")
-    focus_smite_window()
+
+    if not focus_smite_window():
+        sys.exit(1)
+
     try:
-        if all_gods:
-            process_all_gods(dry_run=dry_run, no_spin=no_spin)
+        if args.all_gods:
+            process_all_gods(dry_run=args.dry_run, no_spin=args.no_spin)
         else:
-            process_current_god(dry_run=dry_run, no_spin=no_spin)
+            process_current_god(dry_run=args.dry_run, no_spin=args.no_spin)
     except KeyboardInterrupt:
         print("\nStopped.")
         sys.exit(0)

@@ -75,18 +75,23 @@ def save_config(cfg: dict):
     CONFIG_PATH.write_text(yaml.dump(cfg, default_flow_style=False, allow_unicode=True), encoding="utf-8")
 
 
-def focus_smite_window():
+def focus_smite_window() -> bool:
+    """Focus the Smite 2 window. Returns True on success or if pywin32 unavailable, False if not found."""
     if not HAS_WIN32:
-        return
+        print("Warning: pywin32 not available, cannot verify game window.")
+        return True
     results = []
     def cb(hwnd, _):
         if win32gui.IsWindowVisible(hwnd) and "smite 2" in win32gui.GetWindowText(hwnd).lower():
             results.append(hwnd)
     win32gui.EnumWindows(cb, None)
-    if results:
-        win32gui.ShowWindow(results[0], win32con.SW_RESTORE)
-        win32gui.SetForegroundWindow(results[0])
-        time.sleep(0.3)
+    if not results:
+        print("Error: Smite 2 window not found. Launch the game and try again.")
+        return False
+    win32gui.ShowWindow(results[0], win32con.SW_RESTORE)
+    win32gui.SetForegroundWindow(results[0])
+    time.sleep(0.3)
+    return True
 
 
 def take_screenshot() -> Image.Image:
@@ -364,7 +369,9 @@ def calibrate_spin():
         elif cmd == "t":
             print(f"  Focusing game in 2 seconds — don't touch the mouse...")
             time.sleep(2)
-            focus_smite_window()
+            if not focus_smite_window():
+                print("  Skipping test — launch the game first.")
+                continue
             time.sleep(0.5)
 
             from PIL import ImageGrab
@@ -400,12 +407,22 @@ def calibrate_spin():
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
-    if "--spin" in sys.argv:
+    import argparse
+    p = argparse.ArgumentParser(
+        description="Calibrate screen regions for the Smite 2 skin screenshotter.",
+        epilog="Run without flags to calibrate regions. Use --spin to tune the rotation animation.",
+    )
+    p.add_argument("--spin", action="store_true",
+                   help="Calibrate spin animation drag distance and duration")
+    args = p.parse_args()
+
+    if args.spin:
         calibrate_spin()
         sys.exit(0)
 
     print("Focusing Smite 2 window...")
-    focus_smite_window()
+    if not focus_smite_window():
+        sys.exit(1)
 
     print("Taking screenshot...")
     screenshot = take_screenshot()

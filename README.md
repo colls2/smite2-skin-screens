@@ -124,39 +124,21 @@ The calibrated values (`spin_drag_px`, `spin_duration_s`) are saved to `config.y
 
 ## Running
 
-### Capture current god only
+Navigate to a god's skin screen in-game, then:
 
-Navigate to the skin selection screen of the god you want to capture, then:
+```
+usage: screenshotter.py [-h] [--all-gods] [--no-spin] [--dry-run]
 
-```bash
-uv run screenshotter.py
+Capture skin screenshots and animations from Smite 2.
+
+options:
+  -h, --help   show this help message and exit
+  --all-gods   Iterate the full god roster automatically
+  --no-spin    Skip animated WebP captures (static screenshots only)
+  --dry-run    Print what would be saved without writing any files
 ```
 
-### Capture all gods
-
-```bash
-uv run screenshotter.py --all-gods
-```
-
-The tool will navigate through the full god roster automatically, processing each one.
-
-### Screenshots only (no spin animations)
-
-```bash
-uv run screenshotter.py --no-spin
-uv run screenshotter.py --all-gods --no-spin
-```
-
-Skips the animated WebP captures entirely. Static screenshots are saved as normal. `spin_file` is omitted from manifest entries for skins captured in this mode.
-
-### Dry run (no files written)
-
-```bash
-uv run screenshotter.py --dry-run
-uv run screenshotter.py --all-gods --dry-run
-```
-
-Prints what would be saved without writing any files or updating the manifest. Useful for testing calibration.
+Flags can be combined freely, e.g. `uv run screenshotter.py --all-gods --no-spin`.
 
 ---
 
