@@ -5,6 +5,8 @@
 #   "pywin32",
 #   "pyyaml",
 #   "pyautogui",
+#   "pynput",
+#   "numpy",
 # ]
 # ///
 
@@ -27,7 +29,14 @@ from pathlib import Path
 from PIL import Image, ImageTk, ImageDraw
 import yaml
 import time
+import numpy as np
 import pyautogui
+
+try:
+    from pynput import mouse as pmouse
+    HAS_PYNPUT = True
+except ImportError:
+    HAS_PYNPUT = False
 
 # ── win32 imports (optional; graceful fallback if game not running) ──────────
 try:
@@ -404,6 +413,242 @@ def calibrate_spin():
             print("  Unknown command.")
 
 
+# ── Scrollbar calibration ─────────────────────────────────────────────────────
+
+def _detect_thumb_at_cursor(
+    cursor_x: int,
+    cursor_y: int,
+    margin: int = 300,
+    color_tol: int = 30,
+) -> tuple[int, int, int, int] | None:
+    """
+    Sample the color at (cursor_x, cursor_y) and walk outward in all four
+    directions while every pixel stays within color_tol (max per-channel
+    distance from the sampled reference color).
+
+    Returns (screen_top_y, screen_bot_y, screen_left_x, screen_right_x) or None.
+
+    The cursor must be over the highlighted scrollbar thumb.  Because
+    ImageGrab does not capture the OS cursor sprite, the cursor is invisible
+    in the screenshot and does not interfere with detection.
+    """
+    from PIL import ImageGrab
+    tmp = tk.Tk(); tmp.withdraw()
+    sw, sh = tmp.winfo_screenwidth(), tmp.winfo_screenheight()
+    tmp.destroy()
+
+    half_x = 50  # wide enough to capture the full thumb width + margin
+    cap_l = max(0, cursor_x - half_x)
+    cap_r = min(sw, cursor_x + half_x + 1)
+    cap_t = max(0, cursor_y - margin)
+    cap_b = min(sh, cursor_y + margin)
+
+    img = ImageGrab.grab(bbox=(cap_l, cap_t, cap_r, cap_b))
+    arr = np.array(img, dtype=np.int32)  # shape (h, w, 3), RGB
+
+    lx = cursor_x - cap_l
+    ly = cursor_y - cap_t
+    if not (0 <= ly < arr.shape[0] and 0 <= lx < arr.shape[1]):
+        return None
+
+    ref = arr[ly, lx].astype(float)
+
+    def _close(pixel) -> bool:
+        return float(np.abs(pixel.astype(float) - ref).max()) <= color_tol
+
+    # Walk up
+    top = ly
+    while top > 0 and _close(arr[top - 1, lx]):
+        top -= 1
+
+    # Walk down
+    bot = ly
+    while bot < arr.shape[0] - 1 and _close(arr[bot + 1, lx]):
+        bot += 1
+
+    # Walk left
+    left = lx
+    while left > 0 and _close(arr[ly, left - 1]):
+        left -= 1
+
+    # Walk right
+    right = lx
+    while right < arr.shape[1] - 1 and _close(arr[ly, right + 1]):
+        right += 1
+
+    if bot - top < 5:  # sanity: must be at least a few pixels tall
+        return None
+
+    return cap_t + top, cap_t + bot, cap_l + left, cap_l + right
+
+
+def _show_scrollbar_verification(
+    screenshot:    Image.Image,
+    track_left:    int,
+    track_top:     int,
+    track_right:   int,
+    track_bottom:  int,
+    thumb_at_top:  tuple[int, int],   # (top_y, bot_y) of thumb at top position
+    thumb_at_bot:  tuple[int, int],   # (top_y, bot_y) of thumb at bottom position
+) -> None:
+    """Show the screenshot with track region and both thumb positions annotated."""
+    img = screenshot.copy()
+    draw = ImageDraw.Draw(img)
+
+    # Red outline: full track area
+    draw.rectangle([track_left, track_top, track_right, track_bottom],
+                   outline="red", width=3)
+
+    bar_w = 14
+    gap   = 6
+    # Blue filled bar just right of track: thumb span at TOP position
+    bx1 = track_right + gap
+    bx2 = bx1 + bar_w
+    draw.rectangle([bx1, thumb_at_top[0], bx2, thumb_at_top[1]], fill="#4488ff")
+    # Cyan filled bar further right: thumb span at BOTTOM position
+    cx1 = bx2 + gap
+    cx2 = cx1 + bar_w
+    draw.rectangle([cx1, thumb_at_bot[0], cx2, thumb_at_bot[1]], fill="cyan")
+
+    tmp = tk.Tk(); tmp.withdraw()
+    screen_w = tmp.winfo_screenwidth()
+    screen_h = tmp.winfo_screenheight()
+    tmp.destroy()
+    scale  = min((screen_w - 20) / img.width, (screen_h - 120) / img.height, 1.0)
+    disp_w = int(img.width  * scale)
+    disp_h = int(img.height * scale)
+    disp   = img.resize((disp_w, disp_h), Image.LANCZOS)
+
+    root = tk.Tk()
+    root.title("Scrollbar calibration result — close to continue")
+    root.configure(bg="#1e1e1e")
+    tk_img = ImageTk.PhotoImage(disp)
+    tk.Label(root, image=tk_img, bg="#1e1e1e").pack()
+    tk.Label(
+        root,
+        text="RED = track area  │  BLUE = thumb at top  │  CYAN = thumb at bottom",
+        fg="white", bg="#1e1e1e", font=("Segoe UI", 9),
+    ).pack(pady=(2, 6))
+    root.mainloop()
+
+
+def calibrate_scrollbar() -> None:
+    """
+    Calibrate scrollbar_track with two drag-and-release gestures.
+
+    Step 1: user drags the thumb to the TOP of the track and releases.
+            → detects track_top and thumb_h from the highlighted thumb.
+    Step 2: user drags the thumb to the BOTTOM of the track and releases.
+            → detects track_bottom from the highlighted thumb.
+
+    Capturing on mouse RELEASE (not press) means a drag to position is itself
+    the signal — no accidental capture mid-scroll.  Each detection is
+    self-contained and does not depend on any other calibrated region.
+    """
+    if not HAS_PYNPUT:
+        print("pynput is required for --scrollbar: pip install pynput")
+        sys.exit(1)
+
+    print("Focusing Smite 2 window...")
+    if not focus_smite_window():
+        sys.exit(1)
+
+    print()
+    print("═══ Scrollbar Calibration ═══")
+    print()
+
+    def _await_right_click() -> tuple[int, int] | None:
+        """Block until the user right-clicks. Returns (x, y), or None on Ctrl+C."""
+        result: dict = {}
+        def on_click(x, y, button, pressed):
+            if button == pmouse.Button.right and pressed:
+                result['pos'] = (int(x), int(y))
+                return False  # stop listener
+        try:
+            with pmouse.Listener(on_click=on_click) as listener:
+                listener.join()
+        except KeyboardInterrupt:
+            return None
+        return result.get('pos')
+
+    # ── Step 1: thumb at top ──────────────────────────────────────────────────
+    print("Step 1: Drag the scrollbar thumb to the TOP of the track.")
+    print("        While still hovering on the thumb, RIGHT-CLICK to confirm.")
+    print()
+    print("Waiting for right-click... (Ctrl+C to abort)")
+
+    pos = _await_right_click()
+    if pos is None:
+        print("\nAborted.")
+        return
+
+    cx, cy = pos
+    time.sleep(0.06)  # let hover highlight settle
+    top_bounds = _detect_thumb_at_cursor(cx, cy)
+    if top_bounds is None:
+        print(f"  ! No thumb detected at ({cx}, {cy}).")
+        print("    Make sure you right-clicked on the scrollbar thumb and try again.")
+        return
+
+    track_top, thumb_bot_at_top, track_left, track_right = top_bounds
+    thumb_h = thumb_bot_at_top - track_top
+    track_width = track_right - track_left + 1
+    print(f"  [step 1] track_top={track_top}  thumb_h={thumb_h}px  "
+          f"left={track_left}  right={track_right}  width={track_width}px")
+
+    # ── Step 2: thumb at bottom ───────────────────────────────────────────────
+    print()
+    print("Step 2: Drag the scrollbar thumb to the BOTTOM of the track.")
+    print("        While still hovering on the thumb, RIGHT-CLICK to confirm.")
+    print()
+    print("Waiting for right-click... (Ctrl+C to abort)")
+
+    pos = _await_right_click()
+    if pos is None:
+        print("\nAborted.")
+        return
+
+    cx2, cy2 = pos
+    time.sleep(0.06)
+    bot_bounds = _detect_thumb_at_cursor(cx2, cy2)
+    if bot_bounds is None:
+        print(f"  ! No thumb detected at ({cx2}, {cy2}).")
+        print("    Make sure you right-clicked on the scrollbar thumb and try again.")
+        return
+
+    thumb_top_at_bot, track_bottom, _l2, _r2 = bot_bounds
+    thumb_h2 = track_bottom - thumb_top_at_bot
+    print(f"  [step 2] track_bottom={track_bottom}  thumb_h={thumb_h2}px")
+
+    if abs(thumb_h - thumb_h2) > 4:
+        print(f"  WARNING: thumb height inconsistent — step 1: {thumb_h}px, step 2: {thumb_h2}px")
+        print("           Re-run calibration if this seems wrong.")
+
+    track_height = track_bottom - track_top
+
+    print()
+    print(f"  scrollbar_track = [{track_left}, {track_top}, {track_width}, {track_height}]")
+
+    cfg = load_config()
+    old = cfg.get("regions", {}).get("scrollbar_track", "not set")
+    cfg.setdefault("regions", {})["scrollbar_track"] = [
+        track_left, track_top, track_width, track_height,
+    ]
+    save_config(cfg)
+    print()
+    print(f"  config.yaml updated: scrollbar_track {old!r} → "
+          f"[{track_left}, {track_top}, {track_width}, {track_height}]")
+
+    from PIL import ImageGrab
+    print("\nShowing verification window...")
+    _show_scrollbar_verification(
+        ImageGrab.grab(),
+        track_left, track_top, track_right, track_bottom,
+        thumb_at_top=(track_top,        thumb_bot_at_top),
+        thumb_at_bot=(thumb_top_at_bot, track_bottom),
+    )
+
+
 # ── Entry point ───────────────────────────────────────────────────────────────
 
 if __name__ == "__main__":
@@ -414,10 +659,16 @@ if __name__ == "__main__":
     )
     p.add_argument("--spin", action="store_true",
                    help="Calibrate spin animation drag distance and duration")
+    p.add_argument("--scrollbar", action="store_true",
+                   help="Calibrate scrollbar_track by dragging the thumb top→bottom (requires pynput)")
     args = p.parse_args()
 
     if args.spin:
         calibrate_spin()
+        sys.exit(0)
+
+    if args.scrollbar:
+        calibrate_scrollbar()
         sys.exit(0)
 
     print("Focusing Smite 2 window...")

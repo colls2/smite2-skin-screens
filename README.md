@@ -104,11 +104,30 @@ All results are saved to `config.yaml` automatically when you close the window. 
 
 **Tips:**
 - Draw regions slightly tight rather than loose — OCR accuracy improves when the text region is clean
-- For `scrollbar_track`, draw the full-height track including the thumb; it can be very thin (a few pixels wide)
+- For `scrollbar_track`, a rough rectangle is fine here — Step 3 below replaces it with an exact auto-detected value
 - For `prism_counter`, `btn_prism_prev`, `btn_prism_next` — click a skin that has prism recolors before calibrating so the prism UI is visible. Right-click to skip these if no prism skin is visible and come back later
 - For `mouse_park`, click somewhere in the top-right corner of the screen outside the capture area (e.g. the desktop area above the game UI)
 
-### Step 3: Calibrate the spin animation
+### Step 3: Calibrate the scrollbar
+
+The scrollbar track dimensions (position, exact pixel width, and height) are detected automatically by dragging the thumb to each end of the track:
+
+```bash
+uv run calibrate.py --scrollbar
+```
+
+You will be asked to do two gestures:
+
+1. **Drag the thumb to the top** of the scrollbar track, then **right-click** while still hovering on it
+2. **Drag the thumb to the bottom**, then **right-click** again
+
+The tool samples the exact color of the highlighted thumb at your cursor position and walks outward in all four directions to measure its bounds precisely — width, height, and position — without relying on brightness thresholds or requiring you to click dead center. A verification window shows the detected track region and thumb positions at both ends.
+
+Results are written to `scrollbar_track` in `config.yaml`.
+
+> **When to re-run:** After any game UI update that moves or resizes the scrollbar, or if scroll targets seem off.
+
+### Step 4: Calibrate the spin animation
 
 The spin animation drag distance and duration need to match so the model completes exactly one full rotation.
 

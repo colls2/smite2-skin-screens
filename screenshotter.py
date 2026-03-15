@@ -73,8 +73,6 @@ COLUMNS     = GRID_CFG["columns"]
 _ga         = REGIONS["grid_area"]    # [left, top, w, h]
 GRID_BOTTOM = _ga[1] + _ga[3]
 
-ROWS_PER_SCROLL    = 2   # rows advanced per scroll step (matches visible rows)
-
 # ── Helpers ───────────────────────────────────────────────────────────────────
 
 def region_center(region: list) -> tuple[int, int]:
@@ -168,21 +166,56 @@ def visible_card_centers() -> list[tuple[int, int]]:
 def find_thumb_bounds() -> tuple[int, int] | None:
     """
     Find the scrollbar thumb top/bottom Y in screen coordinates.
-    The thumb is identified as the brightest continuous region in the track.
     Returns (thumb_top_y, thumb_bottom_y) or None if detection fails.
+
+    Hovers over the track centre to trigger the thumb highlight, then finds
+    the largest contiguous bright run within the track strip.
+
+    Algorithm (brightness threshold, gap tolerance) is identical to
+    _detect_thumb_at_cursor() in calibrate.py so both scripts measure the
+    same thumb_h for a given scroll position.
     """
     track = REGIONS["scrollbar_track"]
     l, t, w, h = track
-    arr = np.array(capture(track).convert("L"), dtype=np.float32)  # grayscale
+    pyautogui.moveTo(l + w // 2, t + h // 2, duration=0.05)
+    time.sleep(0.1)
+    arr = np.array(capture(track).convert("L"), dtype=np.float32)
 
     row_brightness = arr.mean(axis=1)
-    threshold = row_brightness.mean() * 1.2   # thumb is brighter than the track bg
-    thumb_rows = np.where(row_brightness > threshold)[0]
+    lo = float(row_brightness.min())
+    hi = float(row_brightness.max())
+    if hi - lo < 10:
+        return None  # track is uniform — no detectable thumb
 
-    if len(thumb_rows) == 0:
+    threshold = lo + (hi - lo) * 0.4
+    bright = np.where(row_brightness > threshold)[0]
+    if len(bright) == 0:
         return None
 
-    return int(thumb_rows[0]) + t, int(thumb_rows[-1]) + t
+    # Build contiguous runs with a 5-row gap tolerance
+    runs: list[tuple[int, int]] = []
+    r_start = int(bright[0])
+    r_prev  = r_start
+    for r in bright[1:]:
+        r = int(r)
+        if r - r_prev > 5:
+            runs.append((r_start, r_prev))
+            r_start = r
+        r_prev = r
+    runs.append((r_start, r_prev))
+
+    # The thumb is the largest bright run within the track
+    top_local, bot_local = max(runs, key=lambda r: r[1] - r[0])
+
+    # Trim gradient bleed from each edge: walk inward until brightness exceeds
+    # a stricter threshold.  The broad 0.4 pass finds the run; 0.6 trims it.
+    strict = lo + (hi - lo) * 0.6
+    while top_local < bot_local and row_brightness[top_local] < strict:
+        top_local += 1
+    while bot_local > top_local and row_brightness[bot_local] < strict:
+        bot_local -= 1
+
+    return top_local + t, bot_local + t
 
 
 def detect_scrollable() -> bool:
@@ -215,6 +248,37 @@ def detect_scrollable() -> bool:
     return scrollable
 
 
+def measure_scroll_geometry() -> tuple[int, int] | None:
+    """
+    Infer total row count from scrollbar thumb/track proportion.
+
+    Returns (total_rows, thumb_h) or None if the thumb can't be detected.
+    thumb_h is the measured visual height of the thumb; the caller uses it
+    together with the known-good edge anchors to compute absolute drag targets.
+
+    Formula:  total_rows = round(visible_rows × track_h / thumb_h)
+    Rounding absorbs any decorative border inflation in the measured thumb_h.
+    """
+    bounds = find_thumb_bounds()
+    if bounds is None:
+        return None
+    thumb_top, thumb_bottom = bounds
+    thumb_h = thumb_bottom - thumb_top
+    if thumb_h <= 0:
+        return None
+
+    track_h = REGIONS["scrollbar_track"][3]
+    # Exact visible-row fraction including the partial bottom row
+    grid_visible_h = _ga[1] + _ga[3] - CARD_TOP
+    visible_rows = grid_visible_h / (CARD_H + GAP_Y)
+
+    total_rows = round(visible_rows * track_h / thumb_h)
+    if total_rows <= int(visible_rows):
+        return None   # fewer rows than viewport — treat as not scrollable
+
+    return total_rows, thumb_h
+
+
 def scroll_grid_to_top():
     """
     Scroll the skin grid back to the top.
@@ -229,9 +293,13 @@ def scroll_grid_to_top():
     if bounds is not None:
         thumb_top, thumb_bottom = bounds
         thumb_cy = (thumb_top + thumb_bottom) // 2
-        pyautogui.moveTo(cx, thumb_cy, duration=0.1)
-        pyautogui.dragTo(cx, t + 3, duration=0.4, button="left")
+        pyautogui.moveTo(cx, thumb_cy, duration=0.15)
+        pyautogui.mouseDown(button="left")
+        time.sleep(0.3)
+        pyautogui.moveTo(cx, t - 2, duration=0.8)  # overshoot above track; game clamps to top
         time.sleep(0.4)
+        pyautogui.mouseUp(button="left")
+        time.sleep(0.3)
         print(f"  [scroll_to_top] dragged thumb (span={thumb_bottom - thumb_top}px) to top")
     else:
         pyautogui.click(cx, t + 3)
@@ -239,13 +307,47 @@ def scroll_grid_to_top():
         print("  [scroll_to_top] no thumb — clicked track top as fallback")
 
 
+def _drag_thumb_to_cy(target_cy: int):
+    """Drag the scrollbar thumb center to absolute screen Y coordinate target_cy.
+
+    Uses slow, deliberate mouse events (press-hold → slow drag → release-hold)
+    which are more precise than a quick dragTo on Windows.
+
+    When target_cy is at or near the track bottom, the drag overshoots slightly
+    into the track margin so the game's own clamping guarantees a full-bottom
+    scroll — eliminating the ~10px physical cap the game enforces on the thumb.
+    """
+    l, t, w, h = REGIONS["scrollbar_track"]
+    cx = l + w // 2
+    track_bottom = t + h
+
+    bounds = find_thumb_bounds()
+    if bounds is None:
+        print("  warn  [drag_thumb] thumb not found — skipping drag")
+        return
+    thumb_cy = (bounds[0] + bounds[1]) // 2
+
+    # When aiming for the very bottom of the track, drag a bit past so the
+    # game's clamp stops it exactly at its physical maximum.
+    dest = target_cy
+    if target_cy >= track_bottom - 15:
+        dest = track_bottom - 2  # game clamps to its own limit
+
+    pyautogui.moveTo(cx, thumb_cy, duration=0.15)
+    pyautogui.mouseDown(button="left")
+    time.sleep(0.3)
+    pyautogui.moveTo(cx, dest, duration=0.8)
+    time.sleep(0.4)
+    pyautogui.mouseUp(button="left")
+    time.sleep(0.3)
+
+
 def scroll_grid_down() -> bool:
     """
-    Page-down the skin grid. Returns True if the grid actually scrolled.
+    Fallback scroll for when no thumb geometry is available.
 
-    Uses the first card's skin name as the scroll oracle — reliable even when
-    the scrollbar thumb can't be detected visually (e.g. theme-matched track).
-    Falls back to clicking the lower quarter of the track when no thumb is found.
+    Clicks below the thumb (or the lower-quarter of the track) and uses
+    first-card OCR to confirm the grid actually moved.
     """
     first_cx = CARD_LEFT + CARD_W // 2
     first_cy = CARD_TOP + CARD_H // 2
@@ -253,23 +355,21 @@ def scroll_grid_down() -> bool:
     name_before = ocr(REGIONS["skin_name"]).strip()
 
     l, t, w, h = REGIONS["scrollbar_track"]
+    cx = l + w // 2
     bounds = find_thumb_bounds()
     if bounds is not None:
         click_y = min(bounds[1] + 8, t + h - 2)
-        print(f"  [scroll_down] thumb at {bounds[0]}–{bounds[1]}, clicking y={click_y}")
+        print(f"  [scroll_down] clicking below thumb at y={click_y}")
     else:
-        click_y = t + (h * 3 // 4)   # lower quarter of track → page-down zone
-        print(f"  [scroll_down] no thumb, clicking lower track y={click_y}")
-
-    pyautogui.click(l + w // 2, click_y)
+        click_y = t + (h * 3 // 4)
+        print(f"  [scroll_down] no thumb — clicking lower track y={click_y}")
+    pyautogui.click(cx, click_y)
     time.sleep(0.4)
 
     click_at(first_cx, first_cy, delay=0.3)
     name_after = ocr(REGIONS["skin_name"]).strip()
-
     scrolled = name_after.lower() != name_before.lower()
-    marker = "scrolled" if scrolled else "no change"
-    print(f"  [scroll_down] {marker}: {name_before!r} → {name_after!r}")
+    print(f"  [scroll_down] {'scrolled' if scrolled else 'no change'}: {name_before!r} → {name_after!r}")
     return scrolled
 
 
@@ -525,15 +625,92 @@ def process_current_god(dry_run: bool = False, no_spin: bool = False):
     run_start = time.monotonic()
 
     card_centers = visible_card_centers()
+    # Exact visible-row fraction including partial bottom row — derived from calibrated geometry
+    visible_rows = (_ga[1] + _ga[3] - CARD_TOP) / (CARD_H + GAP_Y)
     print(f"Grid geometry: {len(card_centers)} card slots visible per page "
-          f"({CARD_W}×{CARD_H}px, gap {GAP_X}px, {COLUMNS} cols), "
-          f"scrolling via scrollbar ({ROWS_PER_SCROLL} rows per step)")
+          f"({CARD_W}×{CARD_H}px, gap {GAP_X}px, {COLUMNS} cols, {visible_rows:.2f} visible rows)")
+
+    # Scroll to top first: detect_scrollable needs row 3 at its unscrolled position,
+    # and measure_scroll_geometry needs the thumb at a known (top) position.
+    print("Scrolling grid to top...")
+    scroll_grid_to_top()
 
     print("\nDetecting scroll mode...")
     scrollable = detect_scrollable()
 
-    print("Scrolling grid to top...")
-    scroll_grid_to_top()
+    # Compute scroll geometry when scrollable.
+    # Strategy: use the known-good visual edge anchors (user-confirmed: thumb at track
+    # top → row 1 at grid top; thumb at track bottom → last row at grid bottom).
+    # All intermediate target positions are computed as absolute thumb-center Y values
+    # so there is no accumulated error and no clamping needed.
+    geom: tuple[int, int] | None = None
+    bottom_centers: list[tuple[int, int]] = []
+    scroll_target_cys: list[int] = []
+    if scrollable:
+        geom = measure_scroll_geometry()
+        if geom is not None:
+            total_rows, vis_thumb_h = geom
+            _, t_tr, _, h_tr = REGIONS["scrollbar_track"]
+
+            # Measure the actual top anchor: the thumb's true minimum Y after
+            # clamping to the track top.  The calibrated t_tr may sit above the
+            # game's physical thumb limit (calibration tends to pick up a bright
+            # border above the thumb), so we read the real position here.
+            top_bounds = find_thumb_bounds()
+            top_anchor_cy = (top_bounds[0] + top_bounds[1]) // 2 if top_bounds \
+                            else t_tr + vis_thumb_h // 2
+
+            # Measure the actual bottom anchor by dragging past the track bottom
+            # and letting the game clamp.  This is a fast one-off drag.
+            cx_tr = REGIONS["scrollbar_track"][0] + REGIONS["scrollbar_track"][2] // 2
+            _b = find_thumb_bounds()
+            if _b:
+                _tc = (_b[0] + _b[1]) // 2
+                pyautogui.moveTo(cx_tr, _tc, duration=0.15)
+                pyautogui.mouseDown(button="left")
+                time.sleep(0.3)
+                pyautogui.moveTo(cx_tr, t_tr + h_tr - 2, duration=0.8)
+                time.sleep(0.4)
+                pyautogui.mouseUp(button="left")
+                time.sleep(0.3)
+            bot_bounds = find_thumb_bounds()
+            bot_anchor_cy = (bot_bounds[0] + bot_bounds[1]) // 2 if bot_bounds \
+                            else t_tr + h_tr - vis_thumb_h // 2
+
+            # Scroll back to top before we start processing cards.
+            scroll_grid_to_top()
+            # Re-measure top anchor after the return scroll (more accurate than
+            # the first measurement which happened right after detect_scrollable).
+            top_bounds2 = find_thumb_bounds()
+            if top_bounds2:
+                top_anchor_cy = (top_bounds2[0] + top_bounds2[1]) // 2
+
+            travel = bot_anchor_cy - top_anchor_cy
+            print(f"  Scroll anchors: top_cy={top_anchor_cy}  bot_cy={bot_anchor_cy}  "
+                  f"travel={travel}px")
+
+            # Interpolate target thumb-centre positions linearly between the two
+            # measured anchors.  This is independent of any calibration error in
+            # track_top/track_bottom.
+            scroll_target_cys = [
+                int(round(top_anchor_cy
+                           + (row - visible_rows) / (total_rows - visible_rows) * travel))
+                for row in range(3, total_rows + 1)
+            ]
+            # Last row always goes to the physical bottom (game clamps there).
+            scroll_target_cys[-1] = bot_anchor_cy
+
+            grid_bottom = _ga[1] + _ga[3]
+            bottom_row_cy = grid_bottom - CARD_H // 2
+            bottom_centers = [
+                (CARD_LEFT + col * (CARD_W + GAP_X) + CARD_W // 2, bottom_row_cy)
+                for col in range(COLUMNS)
+            ]
+            print(f"  Scroll geometry: {total_rows} total rows, thumb={vis_thumb_h}px, "
+                  f"track={h_tr}px")
+            print(f"  Thumb targets: {scroll_target_cys}  bottom_row y={bottom_row_cy}")
+        else:
+            print("  Scroll geometry: thumb not detected — will fall back to click-track mode")
 
     # Ensure the first skin is freshly selected before we start capturing.
     # If skin 1 was already active when we arrived, clicking it again does nothing
@@ -545,134 +722,164 @@ def process_current_god(dry_run: bool = False, no_spin: bool = False):
 
     saved = 0
     skipped = 0
-    page = 0
     god_name_raw = "unknown"
     god_skins: list[dict] = []
 
-    while True:
-        for cx, cy in card_centers:
-            # Hover first to let the OS cursor update, then check if it's the
-            # hand cursor. Arrow cursor = empty padding slot → skip it.
-            pyautogui.moveTo(cx, cy, duration=0.1)
-            time.sleep(0.1)
-            if HAS_WIN32 and not cursor_is_hand():
-                print(f"  skip  slot ({cx},{cy}) — no card (arrow cursor)")
-                continue
+    # ── Per-card processing ───────────────────────────────────────────────────
 
-            click_at(cx, cy, delay=DELAYS["after_skin_select"])
+    def _process_card(cx: int, cy: int):
+        nonlocal saved, skipped, god_name_raw
 
-            god_name_raw = ocr(REGIONS["god_name"]).strip()
-            skin_name_raw = ocr(REGIONS["skin_name"]).strip()
+        # Hover first so the OS cursor updates; arrow cursor = empty slot → skip.
+        pyautogui.moveTo(cx, cy, duration=0.1)
+        time.sleep(0.1)
+        if HAS_WIN32 and not cursor_is_hand():
+            print(f"  skip  slot ({cx},{cy}) — no card (arrow cursor)")
+            return
 
-            if not god_name_raw:
-                print(f"  warn  OCR returned empty god name at ({cx},{cy}) — skipping skin")
-                continue
-            if not skin_name_raw:
-                print(f"  warn  OCR returned empty skin name at ({cx},{cy}) — skipping skin")
-                continue
+        click_at(cx, cy, delay=DELAYS["after_skin_select"])
 
-            _cur, total_prisms = get_prism_info()
+        god_name_raw = ocr(REGIONS["god_name"]).strip()
+        skin_name_raw = ocr(REGIONS["skin_name"]).strip()
 
-            # Track files written for this skin. On Ctrl+C we delete them so
-            # the next run starts fresh rather than finding a partial capture.
-            _skin_files: list[Path] = []
-            try:
-                if total_prisms > 0:
-                    # Prism 1/N is the base skin; prisms 2..N are recolors with names
-                    # of the form "Base Skin Name - Recolor Name".
-                    navigate_to_first_prism()
+        if not god_name_raw:
+            print(f"  warn  OCR returned empty god name at ({cx},{cy}) — skipping skin")
+            return
+        if not skin_name_raw:
+            print(f"  warn  OCR returned empty skin name at ({cx},{cy}) — skipping skin")
+            return
 
-                    base_name_raw = ocr(REGIONS["skin_name"]).strip()
-                    if not base_name_raw:
-                        print(f"  warn  OCR returned empty prism base name at ({cx},{cy}) — skipping skin")
+        _cur, total_prisms = get_prism_info()
+
+        # Track files written for this skin. On Ctrl+C we delete them so
+        # the next run starts fresh rather than finding a partial capture.
+        _skin_files: list[Path] = []
+        try:
+            if total_prisms > 0:
+                # Prism 1/N is the base skin; prisms 2..N are recolors with names
+                # of the form "Base Skin Name - Recolor Name".
+                navigate_to_first_prism()
+
+                base_name_raw = ocr(REGIONS["skin_name"]).strip()
+                if not base_name_raw:
+                    print(f"  warn  OCR returned empty prism base name at ({cx},{cy}) — skipping skin")
+                    return
+                base_slug = make_id(god_name_raw + " " + base_name_raw)
+                base_file = f"{base_slug}.webp"
+                base_spin = f"{base_slug}-spin.webp"
+                _skin_files.append(OUTPUT_DIR / base_file)
+                if not no_spin:
+                    _skin_files.append(OUTPUT_DIR / base_spin)
+                s, k = _log_save(save_image(OUTPUT_DIR / base_file, dry_run), base_file,
+                                 f"prism 1/{total_prisms}")
+                saved += s; skipped += k
+                if not no_spin:
+                    s, k = _log_save(capture_spin_webp(OUTPUT_DIR / base_spin, dry_run), base_spin,
+                                     f"spin prism 1/{total_prisms}")
+                    saved += s; skipped += k
+
+                skin_entry: dict = {
+                    "name": base_name_raw,
+                    "file": base_file,
+                    **({} if no_spin else {"spin_file": base_spin}),
+                    "prisms": {},
+                }
+
+                for i in range(2, total_prisms + 1):
+                    if REGIONS.get("btn_prism_next"):
+                        click_at(*_find_button("btn_prism_next"),
+                                 delay=DELAYS.get("after_prism_nav", 0.4))
+                    recolor_raw = ocr(REGIONS["skin_name"]).strip()
+                    if not recolor_raw:
+                        print(f"  warn  OCR returned empty recolor name (prism {i}/{total_prisms}) — skipping recolor")
                         continue
-                    base_slug = make_id(god_name_raw + " " + base_name_raw)
-                    base_file = f"{base_slug}.webp"
-                    base_spin = f"{base_slug}-spin.webp"
-                    _skin_files.append(OUTPUT_DIR / base_file)
+                    recolor_slug = make_id(god_name_raw + " " + recolor_raw)
+                    recolor_file = f"{recolor_slug}.webp"
+                    recolor_spin = f"{recolor_slug}-spin.webp"
+                    _skin_files.append(OUTPUT_DIR / recolor_file)
                     if not no_spin:
-                        _skin_files.append(OUTPUT_DIR / base_spin)
-                    s, k = _log_save(save_image(OUTPUT_DIR / base_file, dry_run), base_file,
-                                     f"prism 1/{total_prisms}")
+                        _skin_files.append(OUTPUT_DIR / recolor_spin)
+                    s, k = _log_save(save_image(OUTPUT_DIR / recolor_file, dry_run),
+                                     recolor_file, f"prism {i}/{total_prisms}")
                     saved += s; skipped += k
                     if not no_spin:
-                        s, k = _log_save(capture_spin_webp(OUTPUT_DIR / base_spin, dry_run), base_spin,
-                                         f"spin prism 1/{total_prisms}")
+                        s, k = _log_save(capture_spin_webp(OUTPUT_DIR / recolor_spin, dry_run),
+                                         recolor_spin, f"spin prism {i}/{total_prisms}")
                         saved += s; skipped += k
 
-                    skin_entry: dict = {
-                        "name": base_name_raw,
-                        "file": base_file,
-                        **({} if no_spin else {"spin_file": base_spin}),
-                        "prisms": {},
+                    skin_entry["prisms"][recolor_slug] = {
+                        "name": recolor_raw,
+                        "index": i - 1,   # 1-based among recolors
+                        "file": recolor_file,
+                        **({} if no_spin else {"spin_file": recolor_spin}),
                     }
 
-                    for i in range(2, total_prisms + 1):
-                        if REGIONS.get("btn_prism_next"):
-                            click_at(*_find_button("btn_prism_next"),
-                                     delay=DELAYS.get("after_prism_nav", 0.4))
-                        recolor_raw = ocr(REGIONS["skin_name"]).strip()
-                        if not recolor_raw:
-                            print(f"  warn  OCR returned empty recolor name (prism {i}/{total_prisms}) — skipping recolor")
-                            continue
-                        recolor_slug = make_id(god_name_raw + " " + recolor_raw)
-                        recolor_file = f"{recolor_slug}.webp"
-                        recolor_spin = f"{recolor_slug}-spin.webp"
-                        _skin_files.append(OUTPUT_DIR / recolor_file)
-                        if not no_spin:
-                            _skin_files.append(OUTPUT_DIR / recolor_spin)
-                        s, k = _log_save(save_image(OUTPUT_DIR / recolor_file, dry_run),
-                                         recolor_file, f"prism {i}/{total_prisms}")
-                        saved += s; skipped += k
-                        if not no_spin:
-                            s, k = _log_save(capture_spin_webp(OUTPUT_DIR / recolor_spin, dry_run),
-                                             recolor_spin, f"spin prism {i}/{total_prisms}")
-                            saved += s; skipped += k
+                god_skins.append(skin_entry)
 
-                        skin_entry["prisms"][recolor_slug] = {
-                            "name": recolor_raw,
-                            "index": i - 1,   # 1-based among recolors
-                            "file": recolor_file,
-                            **({} if no_spin else {"spin_file": recolor_spin}),
-                        }
-
-                    god_skins.append(skin_entry)
-
-                else:
-                    slug = make_id(god_name_raw + " " + skin_name_raw)
-                    filename = f"{slug}.webp"
-                    spin_file = f"{slug}-spin.webp"
-                    _skin_files.append(OUTPUT_DIR / filename)
-                    if not no_spin:
-                        _skin_files.append(OUTPUT_DIR / spin_file)
-                    s, k = _log_save(save_image(OUTPUT_DIR / filename, dry_run), filename)
+            else:
+                slug = make_id(god_name_raw + " " + skin_name_raw)
+                filename = f"{slug}.webp"
+                spin_file = f"{slug}-spin.webp"
+                _skin_files.append(OUTPUT_DIR / filename)
+                if not no_spin:
+                    _skin_files.append(OUTPUT_DIR / spin_file)
+                s, k = _log_save(save_image(OUTPUT_DIR / filename, dry_run), filename)
+                saved += s; skipped += k
+                if not no_spin:
+                    s, k = _log_save(capture_spin_webp(OUTPUT_DIR / spin_file, dry_run), spin_file,
+                                     "spin")
                     saved += s; skipped += k
-                    if not no_spin:
-                        s, k = _log_save(capture_spin_webp(OUTPUT_DIR / spin_file, dry_run), spin_file,
-                                         "spin")
-                        saved += s; skipped += k
 
-                    god_skins.append({
-                        "name": skin_name_raw,
-                        "file": filename,
-                        **({} if no_spin else {"spin_file": spin_file}),
-                        "prisms": {},
-                    })
+                god_skins.append({
+                    "name": skin_name_raw,
+                    "file": filename,
+                    **({} if no_spin else {"spin_file": spin_file}),
+                    "prisms": {},
+                })
 
-            except KeyboardInterrupt:
-                removed = [f for f in _skin_files if f.exists()]
-                for f in removed:
-                    f.unlink()
-                    print(f"\n  cleanup  {f.name}")
-                print("\nInterrupted. Partial files removed. Manifest not updated.")
-                raise
+        except KeyboardInterrupt:
+            removed = [f for f in _skin_files if f.exists()]
+            for f in removed:
+                f.unlink()
+                print(f"\n  cleanup  {f.name}")
+            print("\nInterrupted. Partial files removed. Manifest not updated.")
+            raise
 
-        if not scroll_grid_down():
-            print("\nReached end of skin grid.")
-            break
+    # ── Scroll plan & main loop ───────────────────────────────────────────────
 
-        page += 1
-        print(f"  --- scrolled to page {page + 1} ---")
+    if scrollable and geom is None:
+        # Fallback: no thumb geometry — legacy click-track scroll with OCR oracle
+        page = 0
+        while True:
+            for cx, cy in card_centers:
+                _process_card(cx, cy)
+            if not scroll_grid_down():
+                print("\nReached end of skin grid.")
+                break
+            page += 1
+            print(f"  --- scrolled to page {page + 1} ---")
+
+    else:
+        # Deterministic batch plan:
+        #   Batch 0: rows 1+2 (top-aligned, visible from the start)
+        #   Batch 1..N-2: row 3..total_rows, each bottom-aligned after a drag
+        #
+        # Scroll before batch 1: bottom-align drag (snaps row 3 to grid bottom)
+        # Scroll before batch k>1: one-row drag (advances to the next row)
+        if not scrollable or geom is None:
+            # Non-scrollable: single batch, no scrolls
+            batches = [card_centers]
+        else:
+            batches = [card_centers] + [bottom_centers] * (total_rows - 2)
+
+        for batch_idx, centers in enumerate(batches):
+            if batch_idx > 0:
+                target_cy = scroll_target_cys[batch_idx - 1]
+                _drag_thumb_to_cy(target_cy)
+                label = "bottom-align" if batch_idx == 1 else f"row {batch_idx + 2}"
+                print(f"  --- {label} (thumb → y={target_cy}) ---")
+            for cx, cy in centers:
+                _process_card(cx, cy)
 
     _update_manifest(god_name_raw, god_skins, dry_run)
     elapsed = time.monotonic() - run_start
